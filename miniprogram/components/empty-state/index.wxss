@@ -1,0 +1,39 @@
+.empty {
+  padding: 42rpx 32rpx;
+  border: 1rpx dashed #dfe8e2;
+  border-radius: 22rpx;
+  background: #f8fbf9;
+  text-align: center;
+}
+
+.empty-image {
+  width: 160rpx;
+  height: 160rpx;
+  margin-bottom: 12rpx;
+  opacity: 0.72;
+}
+
+.empty-title {
+  color: #13231d;
+  font-weight: 700;
+}
+
+.empty-tip {
+  margin-top: 8rpx;
+  color: #6b7b73;
+  font-size: 24rpx;
+}
+
+.empty-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 220rpx;
+  min-height: 68rpx;
+  margin: 22rpx auto 0;
+  border-radius: 999rpx;
+  background: #16a05d;
+  color: #fff;
+  font-size: 25rpx;
+  font-weight: 900;
+}

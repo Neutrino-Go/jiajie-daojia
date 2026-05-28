@@ -1,0 +1,97 @@
+<view class="chat-page">
+  <view class="order-chip" wx:if="{{conversation}}">
+    <view class="chip-title">{{conversation.serviceType || '保洁订单'}}</view>
+    <view class="chip-sub">围绕订单沟通服务时间、地址和注意事项</view>
+  </view>
+
+  <scroll-view class="messages" scroll-y>
+    <block wx:for="{{messages}}" wx:key="_id">
+      <view wx:if="{{item.type === 'order_card'}}" class="order-card-message">
+        <view class="order-card-label">订单卡片</view>
+        <view class="order-card-title">{{item.orderSnapshot.serviceType || '保洁服务'}}</view>
+        <view class="order-card-line">{{item.orderSnapshot.serviceTime || '时间待确认'}}</view>
+        <view class="order-card-line">{{item.orderSnapshot.addressLabel || '地址待确认'}}</view>
+        <view class="order-card-foot">
+          <text class="order-card-price">{{item.orderSnapshot.price || '¥0'}}</text>
+          <button class="order-card-button" data-order-id="{{item.orderId}}" bindtap="openOrder">查看订单</button>
+        </view>
+      </view>
+
+      <view wx:elif="{{item.type === 'image'}}" class="msg {{item.mine ? 'mine' : ''}}">
+        <view class="msg-avatar">
+          <image wx:if="{{item.avatarUrl}}" src="{{item.avatarUrl}}" mode="aspectFill"></image>
+          <text wx:else>{{item.avatarText || '聊'}}</text>
+        </view>
+        <view class="msg-main">
+          <view class="image-bubble" data-url="{{item.imageUrl}}" bindtap="previewImage">
+            <image src="{{item.imageUrl}}" mode="aspectFill"></image>
+          </view>
+          <view class="msg-time">{{item.timeText}}</view>
+        </view>
+      </view>
+
+      <view wx:elif="{{item.type === 'voice'}}" class="msg {{item.mine ? 'mine' : ''}}">
+        <view class="msg-avatar">
+          <image wx:if="{{item.avatarUrl}}" src="{{item.avatarUrl}}" mode="aspectFill"></image>
+          <text wx:else>{{item.avatarText || '聊'}}</text>
+        </view>
+        <view class="msg-main">
+          <view
+            class="voice-bubble {{playingVoiceId === (item.localId || item._id) ? 'playing' : ''}} {{item.sendStatus === 'failed' ? 'failed' : ''}}"
+            data-id="{{item.localId || item._id}}"
+            bindtap="playVoice"
+          >
+            <view class="voice-waves">
+              <text></text>
+              <text></text>
+              <text></text>
+            </view>
+            <text class="voice-text">语音 {{item.durationText || '1"'}}</text>
+            <text wx:if="{{item.sendStatus === 'sending'}}" class="voice-status">发送中</text>
+          </view>
+          <view wx:if="{{item.sendStatus === 'failed'}}" class="voice-failed-row">
+            <text>发送失败</text>
+            <text class="retry-link" data-local-id="{{item.localId}}" catchtap="retryVoiceMessage">重试</text>
+          </view>
+          <view class="msg-time">{{item.timeText}}</view>
+        </view>
+      </view>
+
+      <view wx:else class="msg {{item.mine ? 'mine' : ''}}">
+        <view class="msg-avatar">
+          <image wx:if="{{item.avatarUrl}}" src="{{item.avatarUrl}}" mode="aspectFill"></image>
+          <text wx:else>{{item.avatarText || '聊'}}</text>
+        </view>
+        <view class="msg-main">
+          <view class="bubble">{{item.content}}</view>
+          <view class="msg-time">{{item.timeText}}</view>
+        </view>
+      </view>
+    </block>
+  </scroll-view>
+
+  <view class="emoji-panel" wx:if="{{emojiOpen}}">
+    <view
+      wx:for="{{emojis}}"
+      wx:key="*this"
+      class="emoji-item"
+      data-emoji="{{item}}"
+      bindtap="pickEmoji"
+    >{{item}}</view>
+  </view>
+
+  <view class="recording-mask" wx:if="{{recording}}">
+    <view class="recording-card">
+      <view class="recording-pulse"></view>
+      <view>{{recordingText}}</view>
+    </view>
+  </view>
+
+  <view class="composer">
+    <button class="tool-button {{recording ? 'recording' : ''}}" bindtap="toggleVoiceRecording">🎙</button>
+    <button class="tool-button" bindtap="chooseImage">＋</button>
+    <input value="{{input}}" bindinput="onInput" placeholder="输入消息" confirm-type="send" bindconfirm="send" />
+    <button class="tool-button" bindtap="toggleEmoji">😊</button>
+    <button class="send-button" bindtap="send">发送</button>
+  </view>
+</view>

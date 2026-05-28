@@ -1,0 +1,15 @@
+﻿<view class="page">
+  <view class="title">我的服务单</view>
+  <view class="subtitle">只展示当前家洁师账号已经接下的订单。</view>
+  <view class="list">
+    <order-card
+      wx:for="{{orders}}"
+      wx:key="_id"
+      order="{{item}}"
+      role="cleaner"
+      bind:open="openOrder"
+    ></order-card>
+  </view>
+  <empty-state wx:if="{{!loading && orders.length === 0}}" image="/images/brand/brand-logo.png" title="暂无服务单" tip="接单后会出现在这里"></empty-state>
+</view>
+

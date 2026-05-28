@@ -1,0 +1,14 @@
+<view class="message-card" bindtap="open">
+  <view class="avatar">
+    <image wx:if="{{conversation.otherAvatarUrl}}" src="{{conversation.otherAvatarUrl}}" mode="aspectFill"></image>
+    <text wx:else>{{conversation.otherAvatarText || '聊'}}</text>
+  </view>
+  <view class="body">
+    <view class="top">
+      <view class="name">{{conversation.otherName || '订单会话'}}</view>
+      <view class="time">{{conversation.timeText}}</view>
+    </view>
+    <view class="desc">{{conversation.lastMessage || '暂无消息'}}</view>
+  </view>
+  <view class="unread" wx:if="{{conversation.unreadCount}}">{{conversation.unreadCount}}</view>
+</view>

@@ -1,0 +1,10 @@
+.button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  width: 100%;
+}
+
+.vertical {
+  flex-direction: column;
+}

@@ -1,0 +1,17 @@
+<view class="aunt-card" bindtap="open">
+  <view class="avatar">
+    <image wx:if="{{cleaner.avatarUrl}}" class="avatar-img" src="{{cleaner.avatarUrl}}" mode="aspectFill"></image>
+    <text wx:else>{{cleaner.avatarText || '阿'}}</text>
+  </view>
+  <view class="body">
+    <view class="row">
+      <view class="name">{{cleaner.displayName || '保洁家洁师'}}</view>
+      <view class="distance">{{cleaner.distanceText || '距离未知'}}</view>
+    </view>
+    <view class="rating">★ {{cleaner.ratingText}} · 已服务{{cleaner.completedOrderCountText || 0}}单</view>
+    <view class="area">{{cleaner.areaText}}</view>
+    <view class="tags">
+      <text class="tag" wx:for="{{cleaner.serviceTypes}}" wx:key="*this">{{item}}</text>
+    </view>
+  </view>
+</view>

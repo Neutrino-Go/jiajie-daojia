@@ -1,0 +1,102 @@
+<view class="page" wx:if="{{cleaner}}">
+  <view class="profile-head">
+    <view class="avatar-wrap">
+      <image wx:if="{{cleaner.avatarUrl}}" class="avatar-img" src="{{cleaner.avatarUrl}}" mode="aspectFill"></image>
+      <view wx:else class="avatar">{{cleaner.avatarText}}</view>
+    </view>
+    <view class="name">{{cleaner.displayName}}</view>
+    <view class="rating">★ {{cleaner.ratingText}} · 已服务{{cleaner.completedOrderCountText || 0}}单</view>
+    <view class="verify">{{cleaner.phoneVerified ? "电话已核验" : "电话待核验"}} · {{cleaner.manualApprovedText}} · {{cleaner.availableText}}</view>
+  </view>
+
+  <view class="glass-card section" wx:if="{{canEdit}}">
+    <view class="panel-title">服务范围</view>
+    <view class="area-input-row">
+      <input class="ios-input area-input" value="{{areaInput}}" bindinput="onAreaInput" confirm-type="done" bindconfirm="addArea" placeholder="输入小区名称后添加" />
+      <button class="area-add" bindtap="addArea">添加</button>
+    </view>
+    <view class="area-tags" wx:if="{{editForm.serviceAreas.length}}">
+      <button
+        wx:for="{{editForm.serviceAreas}}"
+        wx:key="*this"
+        data-value="{{item}}"
+        bindtap="removeArea"
+        class="ios-chip active"
+      >{{item}} ×</button>
+    </view>
+    <view class="area-empty" wx:else>还没有服务小区，输入后可形成标签。</view>
+
+    <view class="panel-title group-title">服务类型</view>
+    <view class="ios-select">
+      <button
+        wx:for="{{serviceChoices}}"
+        wx:key="name"
+        data-value="{{item.name}}"
+        bindtap="toggleService"
+        class="ios-chip {{item.selected ? 'active' : ''}}"
+      >{{item.name}}</button>
+    </view>
+
+    <view class="pricing-info-card">
+      <view class="panel-title">平台定价说明</view>
+      <view class="pricing-copy">平台按服务城市、服务类型和服务时长自动计算订单价格。</view>
+      <view class="pricing-copy">不同城市价格可能不同，一线城市会根据人工成本适当上浮，二三线城市会适当下调。</view>
+      <view class="pricing-copy">你看到的「预计收入」已扣除平台服务费。最终收入以订单详情页展示为准。</view>
+    </view>
+    <button class="btn btn-primary save-btn" bindtap="saveAll">保存资料</button>
+  </view>
+
+  <view class="card section" wx:else>
+    <view class="panel-title">服务信息</view>
+    <view class="info-row"><text>服务范围</text><text>{{cleaner.areaText}}</text></view>
+    <view class="info-row"><text>服务类型</text><text>{{cleaner.serviceText}}</text></view>
+    <view class="pricing-info-card readonly">
+      <view class="panel-title">平台定价说明</view>
+      <view class="pricing-copy">平台按服务城市、服务类型和服务时长自动计算订单价格。</view>
+      <view class="pricing-copy">你看到的「预计收入」已扣除平台服务费，最终收入以订单详情页展示为准。</view>
+    </view>
+  </view>
+
+  <view class="card section">
+    <view class="panel-title">经验说明</view>
+    <view class="text">{{cleaner.experience || '平台种子账号，便于单账号跑通接单流程。'}}</view>
+  </view>
+
+  <view class="card section">
+    <view class="review-head">
+      <view>
+        <view class="panel-title">用户评价</view>
+        <view class="review-summary">综合评分 {{cleaner.ratingText}} · 已有 {{cleaner.reviewCount || 0}} 条评价</view>
+      </view>
+    </view>
+    <view wx:if="{{recentReviews.length}}" class="review-list">
+      <view wx:for="{{recentReviews}}" wx:for-index="reviewIndex" wx:key="_id" class="review-item">
+        <view class="review-top">
+          <view class="review-stars">★ {{item.rating}}</view>
+          <view class="review-time">{{item.timeText}}</view>
+        </view>
+        <view class="review-meta">{{item.customerNameMasked || '邻里用户'}} · {{item.serviceType || '家政服务'}}</view>
+        <view class="review-content">{{item.content || '用户未填写文字评价'}}</view>
+        <view wx:if="{{item.imageUrls && item.imageUrls.length}}" class="review-images">
+          <image
+            wx:for="{{item.imageUrls}}"
+            wx:for-item="url"
+            wx:key="*this"
+            class="review-image"
+            src="{{url}}"
+            mode="aspectFill"
+            data-url="{{url}}"
+            data-index="{{reviewIndex}}"
+            bindtap="previewReviewImage"
+          ></image>
+        </view>
+      </view>
+    </view>
+    <view wx:else class="area-empty">暂无评价，服务完成后可留下真实反馈。</view>
+  </view>
+
+  <view class="toolbar fixed-action" wx:if="{{!canEdit && isCustomerViewer}}">
+    <button class="btn {{saved ? 'btn-ghost' : 'btn-secondary'}}" bindtap="toggleSave">{{saved ? "取消收藏" : "收藏家洁师"}}</button>
+    <button class="btn btn-primary" bindtap="bookAgain">再约</button>
+  </view>
+</view>

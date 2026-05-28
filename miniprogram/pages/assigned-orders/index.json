@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "指派给我",
+  "usingComponents": {
+    "order-card": "/components/order-card/index",
+    "empty-state": "/components/empty-state/index"
+  }
+}

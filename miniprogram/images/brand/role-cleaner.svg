@@ -1,0 +1,19 @@
+<svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- broom handle -->
+  <path d="M36 10V34" stroke="#F28A19" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- handle connector -->
+  <path d="M29 34H43" stroke="#F28A19" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- broom head body -->
+  <path d="M24 36H48L54 60H18L24 36Z" fill="#F28A19"/>
+
+  <!-- broom bristles -->
+  <path d="M26 42L22 60" stroke="#FFF3E6" stroke-width="3" stroke-linecap="round"/>
+  <path d="M32 42L31 60" stroke="#FFF3E6" stroke-width="3" stroke-linecap="round"/>
+  <path d="M38 42L39 60" stroke="#FFF3E6" stroke-width="3" stroke-linecap="round"/>
+  <path d="M44 42L50 60" stroke="#FFF3E6" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- small sparkle only as cleaning cue -->
+  <path d="M55 14L57 18L61 20L57 22L55 26L53 22L49 20L53 18L55 14Z" fill="#F28A19"/>
+</svg>

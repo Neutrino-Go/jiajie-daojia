@@ -1,0 +1,75 @@
+﻿<view class="page address-page">
+  <view class="title">常用地址</view>
+  <view class="subtitle">默认地址会用于首页地址、发布需求预填和推荐家洁师。</view>
+
+  <view class="address-list" wx:if="{{addresses.length}}">
+    <view class="address-card" wx:for="{{addresses}}" wx:key="_id">
+      <view class="card-head">
+        <view class="community">{{item.community}}</view>
+        <view wx:if="{{item.isDefault}}" class="default-tag">默认</view>
+      </view>
+      <view class="area">{{item.areaText || '省市区街道待补充'}}</view>
+      <view class="detail">{{item.detailAddress || '详细地址待补充'}}</view>
+      <view class="actions">
+        <button wx:if="{{!item.isDefault}}" data-index="{{index}}" bindtap="setDefault">设为默认</button>
+        <button data-index="{{index}}" bindtap="editAddress">编辑</button>
+        <button class="danger" data-index="{{index}}" bindtap="deleteAddress">删除</button>
+        <button class="primary" data-index="{{index}}" bindtap="selectAddress">选择</button>
+      </view>
+    </view>
+  </view>
+
+  <empty-state
+    wx:else
+    image="/images/brand/brand-logo.png"
+    title="暂无常用地址"
+    tip="添加一个常用地址，发布需求时会自动带入"
+  ></empty-state>
+
+  <button class="add-button" bindtap="openAddForm">新增地址</button>
+
+  <view wx:if="{{formVisible}}" class="form-mask" bindtap="closeForm">
+    <view class="form-panel" catchtap="noop">
+      <view class="form-head">
+        <view class="form-title">{{formMode === 'edit' ? '编辑地址' : '新增地址'}}</view>
+        <button class="close-button" bindtap="closeForm">×</button>
+      </view>
+
+      <view class="field">
+        <view class="field-label">省 / 市 / 区</view>
+        <picker mode="region" value="{{region}}" bindchange="onRegionChange">
+          <view class="picker-row">
+            <text>{{form.province}} / {{form.city}} / {{form.district}}</text>
+            <text class="arrow">›</text>
+          </view>
+        </picker>
+      </view>
+
+      <view class="field">
+        <view class="field-label">街道</view>
+        <input value="{{form.street}}" data-field="street" bindinput="onFieldInput" placeholder="请输入街道" />
+      </view>
+
+      <view class="field">
+        <view class="field-label">小区 / 社区名称</view>
+        <input value="{{form.community}}" data-field="community" bindinput="onFieldInput" placeholder="例如：阳光花园" />
+      </view>
+
+      <view class="field">
+        <view class="field-label">详细地址</view>
+        <input value="{{form.detailAddress}}" data-field="detailAddress" bindinput="onFieldInput" placeholder="例如：1幢 201 室" />
+      </view>
+
+      <view class="default-row">
+        <view>
+          <view class="default-title">设为默认地址</view>
+          <view class="default-sub">用于首页、发布需求和推荐家洁师</view>
+        </view>
+        <switch checked="{{form.isDefault}}" bindchange="onDefaultChange" color="#16a05d"></switch>
+      </view>
+
+      <button class="save-button" bindtap="submitForm">保存地址</button>
+    </view>
+  </view>
+</view>
+

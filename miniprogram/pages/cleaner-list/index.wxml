@@ -1,0 +1,18 @@
+﻿<view class="page">
+  <view class="title">可约家洁师</view>
+  <view class="subtitle">展示全部已审核且当前可接单的家洁师。</view>
+
+  <view class="list">
+    <cleaner-card wx:for="{{cleaners}}" wx:key="_id" cleaner="{{item}}" bind:open="openCleaner"></cleaner-card>
+  </view>
+
+  <empty-state
+    wx:if="{{!loading && cleaners.length === 0}}"
+    image="/images/brand/brand-logo.png"
+    title="暂无可约家洁师"
+    tip="请先在首页初始化种子数据，或稍后刷新"
+    action-text="刷新"
+    bind:action="load"
+  ></empty-state>
+</view>
+

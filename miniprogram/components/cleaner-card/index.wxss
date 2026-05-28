@@ -1,0 +1,131 @@
+.cleaner-card {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  width: 100%;
+  max-width: 100%;
+  padding: 22rpx;
+  border: 1rpx solid #e8eee9;
+  border-radius: 20rpx;
+  background: #fff;
+  box-sizing: border-box;
+  box-shadow: 0 10rpx 30rpx rgba(29, 80, 52, 0.06);
+}
+
+.avatar {
+  display: flex;
+  flex: 0 0 84rpx;
+  align-items: center;
+  justify-content: center;
+  width: 84rpx;
+  height: 84rpx;
+  border-radius: 50%;
+  background: #e8f8ef;
+  color: #0a944e;
+  font-size: 30rpx;
+  font-weight: 900;
+  overflow: hidden;
+}
+
+.avatar image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+}
+
+.between {
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  color: #17231d;
+  font-size: 30rpx;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.distance {
+  color: #8a9490;
+  font-size: 22rpx;
+  flex: 0 0 auto;
+  font-weight: 800;
+  max-width: 132rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rating {
+  margin-top: 6rpx;
+  color: #ff9b25;
+  font-size: 23rpx;
+  font-weight: 800;
+}
+
+.meta {
+  margin-top: 6rpx;
+  color: #7a8580;
+  font-size: 23rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-top: 10rpx;
+}
+
+.tag {
+  max-width: 160rpx;
+  padding: 5rpx 12rpx;
+  border-radius: 8rpx;
+  background: #f0fbf5;
+  color: #0a944e;
+  font-size: 20rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action {
+  display: flex;
+  flex: 0 0 112rpx;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 112rpx;
+}
+
+.book {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96rpx;
+  height: 52rpx;
+  padding: 0 20rpx;
+  border-radius: 999rpx;
+  background: linear-gradient(135deg, #1dbf70, #0a944e);
+  color: #fff;
+  font-size: 23rpx;
+  font-weight: 900;
+  line-height: 52rpx;
+  white-space: nowrap;
+}

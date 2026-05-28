@@ -1,0 +1,84 @@
+.message-card {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  padding: 22rpx;
+  border-radius: 20rpx;
+  background: #fff;
+}
+
+.avatar {
+  display: flex;
+  flex: 0 0 78rpx;
+  align-items: center;
+  justify-content: center;
+  width: 78rpx;
+  height: 78rpx;
+  border-radius: 50%;
+  background: #e9fbf1;
+  color: #14995a;
+  font-weight: 900;
+  overflow: hidden;
+}
+
+.avatar image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+  min-width: 0;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  color: #17231d;
+  font-size: 28rpx;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.time,
+.desc {
+  color: #8a9490;
+  font-size: 23rpx;
+}
+
+.time {
+  flex: 0 0 112rpx;
+  width: 112rpx;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.desc {
+  margin-top: 8rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unread {
+  min-width: 34rpx;
+  height: 34rpx;
+  padding: 0 8rpx;
+  border-radius: 999rpx;
+  background: #ff8a18;
+  color: #fff;
+  font-size: 20rpx;
+  line-height: 34rpx;
+  text-align: center;
+}

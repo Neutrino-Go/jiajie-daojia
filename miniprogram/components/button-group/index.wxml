@@ -1,0 +1,3 @@
+<view class="button-group {{vertical ? 'vertical' : ''}}">
+  <slot></slot>
+</view>

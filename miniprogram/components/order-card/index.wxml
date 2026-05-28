@@ -1,0 +1,86 @@
+<view class="order-card {{role === 'cleaner' ? 'cleaner-card' : 'customer-card'}} {{order.canManage || order.canHideForRole ? 'has-more' : ''}}" bindtap="open">
+  <view class="order-card-header">
+    <view class="order-title-row">
+      <view class="order-title-left">
+        <text class="order-service-title">{{order.serviceTypeText || order.serviceType || '日常保洁'}}</text>
+        <text class="order-duration-tag">{{order.durationHours || 3}}小时</text>
+      </view>
+      <view
+        wx:if="{{order.canManage || order.canHideForRole}}"
+        class="order-more-btn"
+        catchtap="more"
+        aria-label="更多操作"
+      >
+        <text class="order-more-dot">•••</text>
+      </view>
+    </view>
+
+    <view class="order-meta-row">
+      <text class="order-time">{{order.serviceTimeText || order.scheduledText}}</text>
+      <text
+        wx:if="{{order.statusBadgeText}}"
+        class="order-main-status order-main-status-{{order.statusStyle || 'waiting'}}"
+      >
+        {{order.statusBadgeText}}
+      </text>
+    </view>
+
+    <view wx:if="{{order.reviewBadgeText || order.nonLocalText || order.distanceDisplayText}}" class="order-extra-row">
+      <view class="order-extra-spacer"></view>
+      <view class="order-extra-group">
+        <text wx:if="{{order.reviewBadgeText}}" class="order-review-status">
+          {{order.reviewBadgeText}}
+        </text>
+
+        <text wx:if="{{order.nonLocalText}}" class="order-nonlocal-status">
+          {{order.nonLocalText}}
+        </text>
+
+        <view wx:if="{{order.distanceDisplayText}}" class="order-distance-info {{order.nonLocal ? 'non-local' : ''}}">
+          <text class="order-distance-icon">⌖</text>
+          <text class="order-distance-text">{{order.distanceDisplayText}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="address">{{order.displayAddress}}</view>
+  <view class="location-line" wx:if="{{role === 'cleaner' && order.locationText}}">{{order.locationText}}</view>
+  <view class="meta">
+    <text>{{order.workloadText}}</text>
+    <text class="dot">·</text>
+    <text>{{order.roleText}}</text>
+  </view>
+  <view class="note" wx:if="{{order.note}}">{{order.note}}</view>
+
+  <view class="card-bottom {{role === 'cleaner' ? 'cleaner-bottom' : ''}}">
+    <view class="cleaner-income-block" wx:if="{{role === 'cleaner'}}">
+      <view class="income-row">
+        <text class="income-label">订单金额</text>
+        <text class="income-value">{{order.priceText}}</text>
+      </view>
+      <view class="income-row">
+        <text class="income-label">平台服务费</text>
+        <text class="income-value fee">{{order.platformFeeDeductText}}</text>
+      </view>
+      <view class="income-row total">
+        <text class="income-label">预计收入</text>
+        <text class="income-value">{{order.cleanerIncomeText}}</text>
+      </view>
+    </view>
+    <view class="price" wx:else>{{order.priceText}}</view>
+    <view class="actions {{role === 'cleaner' ? 'cleaner-actions' : ''}}" wx:if="{{actions.length}}">
+      <button
+        wx:for="{{actions}}"
+        wx:key="key"
+        class="action {{item.key}} {{item.variant || 'secondary'}} {{item.disabled ? 'disabled' : ''}}"
+        data-action="{{item.key}}"
+        disabled="{{item.disabled}}"
+        catchtap="action"
+      >
+        {{item.text}}
+      </button>
+    </view>
+    <button wx:else class="action secondary" catchtap="open">查看详情</button>
+  </view>
+</view>

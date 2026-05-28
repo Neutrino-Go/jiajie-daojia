@@ -1,0 +1,20 @@
+<view class="cleaner-card" bindtap="open">
+  <view class="avatar">
+    <image wx:if="{{cleaner.avatarUrl}}" src="{{cleaner.avatarUrl}}" mode="aspectFill"></image>
+    <text wx:else>{{cleaner.avatarText || '阿'}}</text>
+  </view>
+  <view class="body">
+    <view class="row between">
+      <view class="name">{{cleaner.displayName || '保洁家洁师'}}</view>
+      <view class="distance">{{cleaner.distanceText || '距离未知'}}</view>
+    </view>
+    <view class="rating">★ {{cleaner.ratingText}} · 已服务{{cleaner.completedOrderCountText || 0}}单</view>
+    <view class="meta">{{cleaner.areaText}}</view>
+    <view class="tag-row">
+      <text class="tag" wx:for="{{cleaner.serviceTypes}}" wx:key="*this">{{item}}</text>
+    </view>
+  </view>
+  <view wx:if="{{showBook}}" class="action">
+    <button catchtap="book" class="book">再约</button>
+  </view>
+</view>

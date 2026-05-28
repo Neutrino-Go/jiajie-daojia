@@ -1,0 +1,403 @@
+.chat-page {
+  min-height: 100vh;
+  padding: 24rpx;
+  padding-bottom: 160rpx;
+  background: #f6f8f7;
+}
+
+.order-chip {
+  padding: 22rpx;
+  border-radius: 20rpx;
+  background: #fff;
+}
+
+.chip-title {
+  color: #17231d;
+  font-weight: 900;
+}
+
+.chip-sub {
+  margin-top: 8rpx;
+  color: #7a8580;
+  font-size: 23rpx;
+}
+
+.messages {
+  height: calc(100vh - 292rpx);
+  margin-top: 20rpx;
+}
+
+.order-card-message {
+  width: 560rpx;
+  margin: 0 auto 22rpx;
+  padding: 24rpx;
+  border: 1rpx solid #e5eee9;
+  border-radius: 24rpx;
+  background: #fff;
+  box-shadow: 0 8rpx 20rpx rgba(28, 76, 51, 0.05);
+}
+
+.order-card-label {
+  display: inline-flex;
+  height: 36rpx;
+  padding: 0 16rpx;
+  border-radius: 999rpx;
+  background: #eafbf2;
+  color: #16a05d;
+  font-size: 22rpx;
+  font-weight: 800;
+  line-height: 36rpx;
+}
+
+.order-card-title {
+  margin-top: 14rpx;
+  color: #17231d;
+  font-size: 30rpx;
+  font-weight: 900;
+}
+
+.order-card-line {
+  margin-top: 8rpx;
+  color: #6b7671;
+  font-size: 24rpx;
+}
+
+.order-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18rpx;
+}
+
+.order-card-price {
+  color: #ff8a00;
+  font-size: 30rpx;
+  font-weight: 900;
+}
+
+.order-card-button {
+  flex: 0 0 auto;
+  min-width: 148rpx;
+  height: 56rpx;
+  min-height: 56rpx;
+  padding: 0 22rpx;
+  border: 0;
+  border-radius: 999rpx;
+  background: #16a05d;
+  color: #fff;
+  font-size: 24rpx;
+  font-weight: 800;
+  line-height: 56rpx;
+}
+
+.msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  margin-bottom: 20rpx;
+}
+
+.msg.mine {
+  flex-direction: row-reverse;
+  align-items: flex-start;
+}
+
+.msg-avatar {
+  display: flex;
+  flex: 0 0 56rpx;
+  align-items: center;
+  justify-content: center;
+  width: 56rpx;
+  height: 56rpx;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #e9fbf1;
+  color: #16a05d;
+  font-size: 22rpx;
+  font-weight: 900;
+}
+
+.msg-avatar image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.msg-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 540rpx;
+}
+
+.mine .msg-main {
+  align-items: flex-end;
+}
+
+.bubble {
+  max-width: 520rpx;
+  padding: 18rpx 22rpx;
+  border-radius: 20rpx 20rpx 20rpx 6rpx;
+  background: #fff;
+  color: #17231d;
+  line-height: 1.45;
+}
+
+.mine .bubble {
+  border-radius: 20rpx 20rpx 6rpx 20rpx;
+  background: #16a05d;
+  color: #fff;
+}
+
+.image-bubble {
+  width: 260rpx;
+  height: 190rpx;
+  overflow: hidden;
+  border-radius: 20rpx;
+  background: #e8eee9;
+}
+
+.image-bubble image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.voice-bubble {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  min-width: 190rpx;
+  max-width: 420rpx;
+  padding: 18rpx 24rpx;
+  border-radius: 20rpx 20rpx 20rpx 6rpx;
+  background: #fff;
+  color: #17231d;
+  font-weight: 800;
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+
+.mine .voice-bubble {
+  border-radius: 20rpx 20rpx 6rpx 20rpx;
+  background: #16a05d;
+  color: #fff;
+}
+
+.voice-bubble.playing {
+  background: #eafbf2;
+  color: #0a944e;
+  transform: translateY(-1rpx);
+}
+
+.mine .voice-bubble.playing {
+  background: #0d874b;
+  color: #fff;
+}
+
+.voice-bubble.failed {
+  background: #fff0eb;
+  color: #d9573d;
+}
+
+.voice-waves {
+  display: flex;
+  align-items: center;
+  gap: 4rpx;
+  width: 34rpx;
+  height: 28rpx;
+}
+
+.voice-waves text {
+  display: block;
+  width: 5rpx;
+  height: 12rpx;
+  border-radius: 999rpx;
+  background: currentColor;
+  opacity: 0.7;
+}
+
+.voice-waves text:nth-child(2) {
+  height: 20rpx;
+}
+
+.voice-waves text:nth-child(3) {
+  height: 28rpx;
+}
+
+.voice-bubble.playing .voice-waves text {
+  animation: voiceWave 0.8s ease-in-out infinite;
+}
+
+.voice-bubble.playing .voice-waves text:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.voice-bubble.playing .voice-waves text:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+.voice-text {
+  white-space: nowrap;
+}
+
+.voice-status {
+  margin-left: 4rpx;
+  color: #8a9490;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.mine .voice-status {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.voice-failed-row {
+  display: flex;
+  gap: 14rpx;
+  margin-top: 8rpx;
+  color: #d9573d;
+  font-size: 22rpx;
+}
+
+.retry-link {
+  color: #0a944e;
+  font-weight: 900;
+}
+
+.msg-time {
+  margin-top: 6rpx;
+  color: #9aa39f;
+  font-size: 20rpx;
+}
+
+.composer {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 18rpx 24rpx 42rpx;
+  background: #fff;
+  box-shadow: 0 -8rpx 24rpx rgba(28, 76, 51, 0.06);
+}
+
+.composer input {
+  flex: 1;
+  min-height: 76rpx;
+  min-width: 0;
+  padding: 0 20rpx;
+  border-radius: 999rpx;
+  background: #f5f7f6;
+}
+
+.tool-button {
+  display: flex;
+  flex: 0 0 64rpx;
+  align-items: center;
+  justify-content: center;
+  width: 64rpx;
+  height: 64rpx;
+  min-height: 64rpx;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #f2f5f3;
+  color: #17231d;
+  font-size: 28rpx;
+  line-height: 64rpx;
+}
+
+.tool-button.recording {
+  background: #fff0eb;
+  color: #d9573d;
+}
+
+.send-button {
+  flex: 0 0 104rpx;
+  min-height: 76rpx;
+  padding: 0;
+  border: 0;
+  border-radius: 999rpx;
+  background: #16a05d;
+  color: #fff;
+  font-size: 26rpx;
+  font-weight: 900;
+  line-height: 76rpx;
+}
+
+.emoji-panel {
+  display: flex;
+  gap: 18rpx;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 136rpx;
+  padding: 18rpx 24rpx;
+  background: #fff;
+  box-shadow: 0 -8rpx 24rpx rgba(28, 76, 51, 0.05);
+}
+
+.emoji-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 18rpx;
+  background: #f5f7f6;
+  font-size: 34rpx;
+}
+
+.recording-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.recording-card {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  padding: 34rpx 46rpx;
+  border-radius: 28rpx;
+  background: rgba(18, 35, 29, 0.86);
+  color: #fff;
+  font-size: 28rpx;
+  font-weight: 800;
+}
+
+.recording-pulse {
+  width: 22rpx;
+  height: 22rpx;
+  border-radius: 50%;
+  background: #ff4d4f;
+  animation: recordPulse 1s ease-in-out infinite;
+}
+
+@keyframes voiceWave {
+  0%,
+  100% {
+    transform: scaleY(0.65);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes recordPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}

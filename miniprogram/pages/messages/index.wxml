@@ -1,0 +1,21 @@
+﻿<view class="page">
+  <view class="title">消息</view>
+  <view class="subtitle">接单后自动生成订单会话。</view>
+
+  <view class="list">
+    <message-card
+      wx:for="{{conversations}}"
+      wx:key="_id"
+      conversation="{{item}}"
+      bind:open="openChat"
+    ></message-card>
+  </view>
+
+  <empty-state
+    wx:if="{{!loading && conversations.length === 0}}"
+    image="/images/brand/brand-logo.png"
+    title="暂无会话"
+    tip="客户发布订单、家洁师接单后会出现在这里"
+  ></empty-state>
+</view>
+

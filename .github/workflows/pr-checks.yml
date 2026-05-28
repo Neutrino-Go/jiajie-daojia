@@ -1,0 +1,32 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    name: Validate Mini Program
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install cloud function dependencies
+        run: npm install --prefix cloudfunctions/quickstartFunctions
+
+      - name: Syntax check JavaScript
+        run: |
+          git ls-files 'miniprogram/**/*.js' 'cloudfunctions/**/*.js' \
+            | grep -v 'node_modules' \
+            | xargs -r -n 1 node --check
+
+      - name: Run domain tests
+        run: npm test --prefix cloudfunctions/quickstartFunctions

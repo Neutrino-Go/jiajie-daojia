@@ -1,0 +1,148 @@
+﻿<view class="page home-page">
+  <view class="topbar">
+    <view class="home-location" bindtap="goLocation">
+      <view class="location-pin"></view>
+      <text class="location-text">{{locationLabel}}</text>
+      <text class="location-arrow">▼</text>
+    </view>
+  </view>
+
+  <view wx:if="{{isCustomer}}">
+    <view class="hero customer">
+      <view class="hero-copy">
+        <view class="hero-title">
+          <text class="hero-title-line">找保洁</text>
+          <text class="hero-title-line">就上家洁到家</text>
+        </view>
+        <view class="hero-sub">附近家洁师 · 快速上门 · 省心放心</view>
+      </view>
+      <view class="hero-visual">
+        <image class="hero-img" src="/images/banner/housekeeping_illustration.png" mode="aspectFill"></image>
+      </view>
+    </view>
+
+    <view class="entry-grid">
+      <button class="entry" bindtap="goCreate">
+        <view class="entry-icon logo-icon">
+          <image class="logo-img" src="/images/brand/brand-logo.png" mode="aspectFit"></image>
+        </view>
+        <view>
+          <view class="entry-title">发布需求</view>
+          <view class="entry-sub">去发布</view>
+        </view>
+      </button>
+      <button class="entry" bindtap="goOrders">
+        <view class="entry-icon order-icon">
+          <view></view>
+          <view></view>
+          <view></view>
+        </view>
+        <view>
+          <view class="entry-title">我的订单</view>
+          <view class="entry-sub">查看进度</view>
+        </view>
+      </button>
+    </view>
+
+    <view class="section-header">
+      <text class="section-title">推荐家洁师</text>
+      <view class="section-more" bindtap="goCleaners">查看全部</view>
+    </view>
+    <view class="list">
+      <aunt-card wx:for="{{cleaners}}" wx:key="_id" cleaner="{{item}}" bind:open="openCleaner"></aunt-card>
+    </view>
+    <empty-state
+      wx:if="{{!loading && cleaners.length === 0}}"
+      image="/images/brand/brand-logo.png"
+      title="{{recommendationEmptyTitle}}"
+      tip="请选择当前城市，或稍后再试"
+    ></empty-state>
+  </view>
+
+  <view wx:else>
+    <view class="hero cleaner">
+      <view class="profile-main">
+        <view class="avatar">
+          <image wx:if="{{cleaner.avatarUrl}}" src="{{cleaner.avatarUrl}}" mode="aspectFill"></image>
+          <text wx:else>{{cleaner.avatarText || '洁'}}</text>
+        </view>
+        <view class="profile-info">
+          <view class="nickname">{{cleaner.displayName || '家洁师资料待完善'}}</view>
+          <view class="profile-meta">{{cleaner.ratingText || '暂无评分'}} · 已服务{{cleaner.completedOrderCountText || 0}}单</view>
+        </view>
+      </view>
+      <view class="status-pill {{cleanerAvailable ? 'on' : 'off'}}" bindtap="toggleAvailability">
+        {{cleanerAvailable ? '接单中' : '休息中'}}
+      </view>
+    </view>
+
+    <view class="notice {{cleanerAvailable ? 'ok' : 'warn'}}">
+      {{cleanerAvailable ? '当前为接单中，可以响应附近公开订单。' : '当前为休息中，切换接单中后才能响应订单。'}}
+    </view>
+
+    <view class="seg-tabs">
+      <button class="{{grabTab === 'open' ? 'active' : ''}}" data-tab="open" bindtap="switchGrabTab">附近订单</button>
+      <button class="{{grabTab === 'all' ? 'active' : ''}}" data-tab="all" bindtap="switchGrabTab">全部订单</button>
+      <button class="{{grabTab === 'assigned' ? 'active' : ''}}" data-tab="assigned" bindtap="switchGrabTab">指派订单</button>
+    </view>
+
+    <view class="list" wx:if="{{grabTab === 'open'}}">
+      <order-card
+        wx:for="{{openOrders}}"
+        wx:key="_id"
+        order="{{item}}"
+        role="cleaner"
+        actions="{{item.actions}}"
+        bind:open="openOrder"
+        bind:action="handleOrderAction"
+      ></order-card>
+    </view>
+    <empty-state
+      wx:if="{{grabTab === 'open' && !loading && openOrders.length === 0}}"
+      image="/images/brand/brand-logo.png"
+      title="暂无附近订单"
+      tip="稍后刷新，或切换到指派订单"
+      action-text="刷新"
+      bind:action="load"
+    ></empty-state>
+
+    <view class="list" wx:if="{{grabTab === 'all'}}">
+      <order-card
+        wx:for="{{allOpenOrders}}"
+        wx:key="_id"
+        order="{{item}}"
+        role="cleaner"
+        actions="{{item.actions}}"
+        bind:open="openOrder"
+        bind:action="handleOrderAction"
+      ></order-card>
+    </view>
+    <empty-state
+      wx:if="{{grabTab === 'all' && !loading && allOpenOrders.length === 0}}"
+      image="/images/brand/brand-logo.png"
+      title="暂无公开订单"
+      tip="稍后刷新，或切换到指派订单"
+      action-text="刷新"
+      bind:action="load"
+    ></empty-state>
+
+    <view class="list" wx:if="{{grabTab === 'assigned'}}">
+      <order-card
+        wx:for="{{assignedOrders}}"
+        wx:key="_id"
+        order="{{item}}"
+        role="cleaner"
+        actions="{{item.actions}}"
+        bind:open="openOrder"
+        bind:action="handleOrderAction"
+      ></order-card>
+    </view>
+    <empty-state
+      wx:if="{{grabTab === 'assigned' && !loading && assignedOrders.length === 0}}"
+      image="/images/brand/brand-logo.png"
+      title="暂无指派订单"
+      tip="客户指定你后会出现在这里"
+    ></empty-state>
+  </view>
+</view>
+

@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "附近家洁师",
+  "usingComponents": {
+    "cleaner-card": "/components/cleaner-card/index",
+    "empty-state": "/components/empty-state/index"
+  }
+}

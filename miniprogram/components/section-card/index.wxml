@@ -1,0 +1,4 @@
+<view class="section-card">
+  <view class="section-title" wx:if="{{title}}">{{title}}</view>
+  <slot></slot>
+</view>

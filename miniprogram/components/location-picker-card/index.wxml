@@ -1,0 +1,5 @@
+<button class="location-card" bindtap="tap">
+  <view class="pin"></view>
+  <view class="text">{{label}}</view>
+  <view class="arrow">›</view>
+</button>

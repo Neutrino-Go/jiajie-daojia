@@ -1,0 +1,31 @@
+.app-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 82rpx;
+  padding: 0 30rpx;
+  border-radius: 999rpx;
+  font-size: 28rpx;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.primary {
+  background: linear-gradient(135deg, #1dbf70, #0a944e);
+  color: #fff;
+}
+
+.secondary {
+  background: #fff;
+  color: #0a944e;
+  border: 1rpx solid #cfe9db;
+}
+
+.danger {
+  background: #fff1ec;
+  color: #d94b32;
+}
+
+.block {
+  width: 100%;
+}
