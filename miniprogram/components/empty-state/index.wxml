@@ -1,0 +1,6 @@
+<view class="empty">
+  <image class="empty-image empty-logo" src="/images/brand/brand-logo.png" mode="aspectFit"></image>
+  <view class="empty-title">{{title}}</view>
+  <view class="empty-tip" wx:if="{{tip}}">{{tip}}</view>
+  <button wx:if="{{actionText}}" class="empty-action" bindtap="action">{{actionText}}</button>
+</view>

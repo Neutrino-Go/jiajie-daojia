@@ -1,0 +1,29 @@
+.location-card {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  min-height: 64rpx;
+  padding: 0;
+  color: #26352e;
+  font-size: 26rpx;
+  font-weight: 900;
+}
+
+.pin {
+  width: 15rpx;
+  height: 15rpx;
+  border-radius: 50%;
+  background: #17231d;
+}
+
+.text {
+  max-width: 260rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arrow {
+  color: #8a9490;
+  font-size: 32rpx;
+}

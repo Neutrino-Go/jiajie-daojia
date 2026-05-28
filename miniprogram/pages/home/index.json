@@ -1,0 +1,9 @@
+{
+  "navigationBarTitleText": "家洁到家",
+  "usingComponents": {
+    "empty-state": "/components/empty-state/index",
+    "aunt-card": "/components/aunt-card/index",
+    "order-card": "/components/order-card/index",
+    "status-switch": "/components/status-switch/index"
+  }
+}

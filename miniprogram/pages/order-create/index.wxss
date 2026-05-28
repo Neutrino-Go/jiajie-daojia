@@ -1,0 +1,262 @@
+.form-head {
+  margin-bottom: 12rpx;
+}
+
+.service-grid,
+.duration-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14rpx;
+}
+
+.service-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  min-width: 0;
+  min-height: 126rpx;
+  padding: 18rpx 10rpx;
+  border: 1rpx solid #dfe8e2;
+  border-radius: 18rpx;
+  background: #fff;
+  color: #405049;
+  font-size: 25rpx;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.service-option text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-option.active,
+.duration.active,
+.mode.active {
+  border-color: #19ad63;
+  background: #ecfbf2;
+  color: #0a944e;
+}
+
+.service-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48rpx;
+  height: 48rpx;
+  border-radius: 14rpx;
+  background: #f1f5f2;
+  color: #7a8580;
+  font-size: 22rpx;
+}
+
+.service-option.active .service-icon {
+  background: #19ad63;
+  color: #fff;
+}
+
+.mode-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14rpx;
+}
+
+.mode,
+.duration {
+  min-height: 76rpx;
+  border: 1rpx solid #dfe8e2;
+  border-radius: 18rpx;
+  background: #fff;
+  color: #405049;
+  font-weight: 900;
+}
+
+.no-margin {
+  margin-bottom: 0;
+}
+
+.price {
+  color: #ff7a00;
+  font-size: 32rpx;
+  font-weight: 900;
+}
+
+.price-tip {
+  margin-top: 12rpx;
+  color: #7a8580;
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+
+.price-protect-tip {
+  margin-top: 10rpx;
+  padding: 10rpx 14rpx;
+  border-radius: 14rpx;
+  background: #fff7ed;
+  color: #c05621;
+  font-size: 23rpx;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.pricing-box,
+.pricing-hint {
+  margin-top: 18rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 18rpx;
+  background: #f7faf8;
+}
+
+.pricing-hint {
+  color: #6b7b73;
+  font-size: 25rpx;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.pricing-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #6b7b73;
+  font-size: 25rpx;
+  line-height: 1.6;
+}
+
+.pricing-row + .pricing-row {
+  margin-top: 8rpx;
+}
+
+.pricing-row text:last-child {
+  color: #13231d;
+  font-weight: 900;
+}
+
+.address-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18rpx;
+  width: 100%;
+  min-height: 150rpx;
+  padding: 24rpx;
+  border: 1rpx solid #e2eae5;
+  border-radius: 24rpx;
+  background: #fff;
+  box-shadow: 0 8rpx 22rpx rgba(18, 35, 29, 0.05);
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.address-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.address-main {
+  color: #17231d;
+  font-size: 32rpx;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.address-sub {
+  margin-top: 12rpx;
+  color: #6b7b73;
+  font-size: 25rpx;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.arrow {
+  color: #9aa39f;
+  font-size: 44rpx;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.input-with-suffix {
+  display: flex;
+  align-items: center;
+  height: 88rpx;
+  padding: 0 24rpx;
+  border-radius: 18rpx;
+  background: #f6f8f7;
+  box-sizing: border-box;
+}
+
+.input.suffix-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.input-suffix {
+  flex: 0 0 auto;
+  margin-left: 12rpx;
+  color: #6b7b73;
+  font-size: 28rpx;
+  font-weight: 800;
+}
+
+.tag-panel {
+  margin-top: 22rpx;
+}
+
+.tag-group + .tag-group {
+  margin-top: 22rpx;
+}
+
+.tag-title {
+  margin-bottom: 12rpx;
+  color: #13231d;
+  font-size: 26rpx;
+  font-weight: 900;
+}
+
+.tag-scroll {
+  width: 100%;
+  white-space: nowrap;
+}
+
+.tag-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 12rpx;
+  min-width: 100%;
+  padding-bottom: 4rpx;
+}
+
+.need-tag {
+  flex: 0 0 auto;
+  padding: 12rpx 20rpx;
+  border-radius: 999rpx;
+  background: #f1f4f2;
+  color: #65726c;
+  font-size: 24rpx;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.need-tag.active {
+  background: #16a05d;
+  color: #fff;
+}
+
+.more-tags {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 16rpx;
+  padding: 12rpx 4rpx;
+  color: #16a05d;
+  font-size: 26rpx;
+  font-weight: 900;
+}

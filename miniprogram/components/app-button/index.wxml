@@ -1,0 +1,3 @@
+<button class="app-button {{variant}} {{block ? 'block' : ''}}" bindtap="tap">
+  <slot></slot>
+</button>

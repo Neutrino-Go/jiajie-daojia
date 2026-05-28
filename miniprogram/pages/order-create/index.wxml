@@ -1,0 +1,144 @@
+<view class="page create-page">
+  <view class="form-head">
+    <view class="title">发布需求</view>
+    <view class="subtitle">选择服务内容，留下时间和地址。</view>
+  </view>
+
+  <view class="card section">
+    <view class="label">服务类型</view>
+    <view class="service-grid">
+      <button
+        wx:for="{{serviceTypes}}"
+        wx:key="*this"
+        class="service-option {{form.serviceType === item ? 'active' : ''}}"
+        data-value="{{item}}"
+        bindtap="selectService"
+      >
+        <view class="service-icon">{{index + 1}}</view>
+        <text>{{item}}</text>
+      </button>
+    </view>
+
+    <view class="field">
+      <view class="label">预约方式</view>
+      <view class="mode-row">
+        <button class="mode {{publishMode === 'public' ? 'active' : ''}}" data-mode="public" bindtap="setMode">寻找家洁师</button>
+        <button class="mode {{publishMode === 'assigned' ? 'active' : ''}}" data-mode="assigned" bindtap="setMode">指定家洁师</button>
+      </view>
+    </view>
+
+    <view class="field" wx:if="{{publishMode === 'assigned'}}">
+      <view class="label">选择收藏家洁师</view>
+      <picker mode="selector" range="{{savedCleaners}}" range-key="displayName" bindchange="onCleanerChange">
+        <view class="picker">{{selectedCleanerName}}</view>
+      </picker>
+    </view>
+  </view>
+
+  <view class="card section">
+    <view class="label">服务时间</view>
+    <view class="grid-2">
+      <picker mode="date" value="{{serviceDate}}" start="{{minDate}}" bindchange="onDateChange">
+        <view class="picker">{{serviceDate || "选择日期"}}</view>
+      </picker>
+      <picker mode="time" value="{{serviceTime}}" start="{{timePickerStart}}" end="23:59" bindchange="onTimeChange">
+        <view class="picker">{{serviceTime || "选择时间"}}</view>
+      </picker>
+    </view>
+
+    <view class="field">
+      <view class="label">服务时长</view>
+      <view class="duration-grid">
+        <button
+          wx:for="{{durationOptions}}"
+          wx:key="*this"
+          class="duration {{form.durationHours === item ? 'active' : ''}}"
+          data-value="{{item}}"
+          bindtap="selectDuration"
+        >
+          {{item}}小时
+        </button>
+      </view>
+    </view>
+  </view>
+
+  <view class="card section">
+    <view class="label">服务地址</view>
+    <view class="address-card" bindtap="chooseLocation">
+      <view class="address-content">
+        <view class="address-main">{{locationLabel}}</view>
+        <view class="address-sub">{{locationText || '请选择地址'}}</view>
+      </view>
+      <view class="arrow">›</view>
+    </view>
+
+    <view class="field">
+      <input class="input" value="{{form.addressText}}" data-field="addressText" bindinput="onInput" placeholder="详细地址，如楼栋门牌" />
+    </view>
+    <view class="grid-2">
+      <view class="field">
+        <view class="label">面积</view>
+        <view class="input-with-suffix">
+          <input class="input suffix-input" value="{{form.areaSize}}" data-field="areaSize" bindinput="onInput" type="digit" placeholder="请输入面积" />
+          <text class="input-suffix">㎡</text>
+        </view>
+      </view>
+      <view class="field">
+        <view class="label">电话</view>
+        <input class="input" value="{{form.contactPhone}}" data-field="contactPhone" bindinput="onInput" bindblur="onPhoneBlur" type="number" maxlength="11" placeholder="手机号" />
+      </view>
+    </view>
+  </view>
+
+  <view class="card section">
+    <view class="row between">
+      <view class="label no-margin">价格预估</view>
+      <view class="price" wx:if="{{pricing.canShowEstimate}}">{{pricing.orderAmountText}}</view>
+    </view>
+    <view class="pricing-hint" wx:if="{{!pricing.canShowEstimate}}">{{pricing.estimateHint}}</view>
+    <view class="price-tip">{{pricing.pricingText}}</view>
+    <view class="price-protect-tip" wx:if="{{pricing.minIncomeTip}}">{{pricing.minIncomeTip}}</view>
+    <view class="field">
+      <textarea class="textarea" value="{{form.note}}" data-field="note" bindinput="onInput" placeholder="请描述您的需求，如特殊清洁要求等" />
+    </view>
+    <view class="tag-panel">
+      <view class="tag-title">常用需求</view>
+      <scroll-view class="tag-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+        <view class="tag-row">
+          <view
+            wx:for="{{commonNeedTags}}"
+            wx:for-item="tag"
+            wx:key="*this"
+            data-tag="{{tag}}"
+            bindtap="toggleNeedTag"
+            class="need-tag {{selectedNeedTags.indexOf(tag) >= 0 ? 'active' : ''}}"
+          >
+            {{tag}}
+          </view>
+        </view>
+      </scroll-view>
+      <view class="more-tags" bindtap="toggleMoreNeedTags">{{showAllNeedTags ? '收起需求标签' : '更多需求标签'}}</view>
+      <view wx:if="{{showAllNeedTags}}">
+        <view class="tag-group" wx:for="{{needTagGroups}}" wx:key="title">
+          <view class="tag-title">{{item.title}}</view>
+          <scroll-view class="tag-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+            <view class="tag-row">
+              <view
+                wx:for="{{item.tags}}"
+                wx:for-item="tag"
+                wx:key="*this"
+                data-tag="{{tag}}"
+                bindtap="toggleNeedTag"
+                class="need-tag {{selectedNeedTags.indexOf(tag) >= 0 ? 'active' : ''}}"
+              >
+                {{tag}}
+              </view>
+            </view>
+          </scroll-view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <button class="btn btn-primary fixed-action" bindtap="submit">发布需求</button>
+</view>

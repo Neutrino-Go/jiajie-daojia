@@ -1,0 +1,42 @@
+﻿<view class="page">
+  <view class="summary">
+    <view class="summary-label">本月收入（元）</view>
+    <view class="summary-value">¥ {{stats.monthIncome}}</view>
+    <view class="summary-sub">完成订单 {{stats.completedCount}} 单</view>
+  </view>
+
+  <view class="grid-2 section">
+    <view class="mini-card">
+      <view class="mini-label">订单收入</view>
+      <view class="mini-value">¥ {{stats.orderIncome}}</view>
+    </view>
+    <view class="mini-card">
+      <view class="mini-label">平台奖励</view>
+      <view class="mini-value">¥ {{stats.platformReward}}</view>
+    </view>
+  </view>
+
+  <view class="card section">
+    <view class="panel-title">最近7天</view>
+    <view class="bars">
+      <view class="bar-item" wx:for="{{bars}}" wx:key="label">
+        <view wx:if="{{item.amount > 0}}" class="bar-amount">¥{{item.amount}}</view>
+        <view class="bar" style="height: {{item.height}}rpx;"></view>
+        <view class="bar-label">{{item.label}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card section">
+    <view class="panel-title">收入明细</view>
+    <view wx:for="{{orders}}" wx:key="_id" class="income-row">
+      <view>
+        <view class="income-title">{{item.serviceType}}</view>
+        <view class="income-sub">{{item.scheduledText}}</view>
+      </view>
+      <view class="income-price">{{item.priceText}}</view>
+    </view>
+    <empty-state wx:if="{{!loading && orders.length === 0}}" image="/images/brand/brand-logo.png" title="暂无收入" tip="完成订单后会产生收入记录"></empty-state>
+  </view>
+</view>
+

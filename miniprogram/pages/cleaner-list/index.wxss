@@ -1,0 +1,46 @@
+.list {
+  display: grid;
+  gap: 18rpx;
+  margin-top: 22rpx;
+}
+
+.cleaner-panel {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  margin-top: 28rpx;
+  padding: 28rpx;
+  border-radius: 22rpx;
+  background: #fff;
+  box-shadow: 0 10rpx 30rpx rgba(29, 80, 52, 0.06);
+}
+
+.avatar {
+  display: flex;
+  flex: 0 0 88rpx;
+  align-items: center;
+  justify-content: center;
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 50%;
+  background: #e8f8ef;
+  color: #0a944e;
+  font-size: 32rpx;
+  font-weight: 900;
+}
+
+.panel-main {
+  min-width: 0;
+}
+
+.name {
+  color: #17231d;
+  font-size: 32rpx;
+  font-weight: 900;
+}
+
+.meta {
+  margin-top: 8rpx;
+  color: #7a8580;
+  font-size: 24rpx;
+}

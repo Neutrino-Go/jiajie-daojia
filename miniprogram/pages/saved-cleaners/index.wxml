@@ -1,0 +1,25 @@
+﻿<view class="page">
+  <view class="title">收藏家洁师</view>
+  <view class="subtitle">把服务过、信得过的家洁师留在这里，下次少填信息。</view>
+
+  <view class="list">
+    <view class="cleaner-card-wrap" wx:for="{{cleaners}}" wx:key="_id">
+      <cleaner-card
+        cleaner="{{item}}"
+        show-book="{{true}}"
+        bind:open="openCleaner"
+        bind:book="bookAgain"
+      ></cleaner-card>
+    </view>
+  </view>
+
+  <empty-state
+    wx:if="{{!loading && cleaners.length === 0}}"
+    image="/images/brand/brand-logo.png"
+    title="还没有收藏家洁师"
+    tip="从家洁师资料页或完成订单后收藏"
+    action-text="去看看家洁师"
+    bind:action="goCleaners"
+  ></empty-state>
+</view>
+

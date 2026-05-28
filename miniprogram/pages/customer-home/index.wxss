@@ -1,0 +1,9 @@
+.redirect-page {
+  padding: 48rpx 32rpx;
+  color: #17231d;
+}
+
+.title {
+  font-size: 32rpx;
+  font-weight: 900;
+}

@@ -1,0 +1,389 @@
+.order-card {
+  position: relative;
+  width: 100%;
+  padding: 24rpx;
+  border: 1rpx solid #edf1ee;
+  border-radius: 24rpx;
+  background: #fff;
+  box-shadow: 0 10rpx 28rpx rgba(28, 76, 51, 0.06);
+  box-sizing: border-box;
+}
+
+.order-card-header {
+  width: 100%;
+}
+
+.order-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.order-title-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.order-service-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 340rpx;
+  color: #143328;
+  font-size: 32rpx;
+  font-weight: 800;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-duration-tag {
+  flex: 0 0 auto;
+  height: 32rpx;
+  padding: 0 12rpx;
+  border-radius: 999rpx;
+  background: #eef5f1;
+  color: #6f8279;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 32rpx;
+}
+
+.order-more-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 28rpx;
+  background: #f5f7f6;
+  color: #7e8b86;
+  box-sizing: border-box;
+}
+
+.order-more-dot {
+  color: #7e8b86;
+  font-size: 24rpx;
+  line-height: 1;
+  letter-spacing: 2rpx;
+}
+
+.order-meta-row {
+  margin-top: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.order-time {
+  flex: 1;
+  min-width: 0;
+  color: #7c8b85;
+  font-size: 26rpx;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-main-status {
+  flex: 0 0 auto;
+  height: 40rpx;
+  min-width: 72rpx;
+  padding: 0 16rpx;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  line-height: 40rpx;
+  text-align: center;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+.order-main-status-completed {
+  background: #eaf7ef;
+  color: #22a35a;
+}
+
+.order-main-status-cancelled {
+  background: #f3f4f6;
+  color: #98a2b3;
+}
+
+.order-main-status-active {
+  background: #e8f3ff;
+  color: #2f80ed;
+}
+
+.order-main-status-waiting {
+  background: #fff4e8;
+  color: #f2994a;
+}
+
+.order-main-status-payment {
+  background: #fff4e8;
+  color: #f08a24;
+}
+
+.order-main-status-accepted {
+  background: #eaf7ef;
+  color: #0a944e;
+}
+
+.order-extra-row {
+  margin-top: 8rpx;
+  display: flex;
+  align-items: center;
+}
+
+.order-extra-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.order-extra-group {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10rpx;
+  max-width: 100%;
+}
+
+.order-review-status,
+.order-nonlocal-status {
+  flex: 0 0 auto;
+  height: 34rpx;
+  padding: 0 12rpx;
+  border-radius: 999rpx;
+  font-size: 22rpx;
+  font-weight: 600;
+  line-height: 34rpx;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.order-review-status {
+  background: #fff3e8;
+  color: #f08a24;
+}
+
+.order-nonlocal-status {
+  background: #fff4e8;
+  color: #d9573d;
+}
+
+.order-distance-info {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4rpx;
+  color: #7c8b85;
+}
+
+.order-distance-info.non-local .order-distance-text,
+.order-distance-info.non-local .order-distance-icon {
+  color: #d9573d;
+}
+
+.order-distance-icon {
+  flex: 0 0 auto;
+  color: #95b8a2;
+  font-size: 22rpx;
+}
+
+.order-distance-text {
+  max-width: 160rpx;
+  color: #7c8b85;
+  font-size: 22rpx;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta,
+.note {
+  margin-top: 10rpx;
+  color: #737f78;
+  font-size: 24rpx;
+  line-height: 1.45;
+}
+
+.address {
+  margin-top: 18rpx;
+  color: #394940;
+  font-size: 26rpx;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.location-line {
+  margin-top: 6rpx;
+  color: #8a9490;
+  font-size: 23rpx;
+  line-height: 1.35;
+}
+
+.dot {
+  margin: 0 8rpx;
+}
+
+.note {
+  padding: 14rpx 16rpx;
+  border-radius: 14rpx;
+  background: #f7faf8;
+}
+
+.card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18rpx;
+  margin-top: 22rpx;
+}
+
+.cleaner-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 18rpx;
+}
+
+.price {
+  flex: 0 0 auto;
+  color: #ff7f16;
+  font-size: 32rpx;
+  font-weight: 900;
+}
+
+.cleaner-income-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+  width: 100%;
+  padding: 18rpx 20rpx;
+  border-radius: 18rpx;
+  background: #fff8f1;
+  color: #6b7b73;
+  font-size: 24rpx;
+  font-weight: 700;
+  box-sizing: border-box;
+}
+
+.income-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24rpx;
+}
+
+.income-label {
+  flex: 0 0 auto;
+  color: #6b7b73;
+}
+
+.income-value {
+  flex: 1;
+  color: #13231d;
+  font-weight: 900;
+  text-align: right;
+}
+
+.income-value.fee {
+  color: #8f9b95;
+}
+
+.income-row.total .income-value {
+  color: #ff7f16;
+  font-size: 30rpx;
+  font-weight: 900;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12rpx;
+  min-width: 0;
+}
+
+.cleaner-actions {
+  width: 100%;
+}
+
+.action {
+  min-width: 128rpx;
+  max-width: 190rpx;
+  height: 52rpx;
+  min-height: 52rpx;
+  padding: 0 20rpx;
+  border-radius: 999rpx;
+  font-size: 23rpx;
+  font-weight: 800;
+  line-height: 52rpx;
+  white-space: nowrap;
+}
+
+.action.review {
+  min-width: 148rpx;
+}
+
+.action.detail {
+  min-width: 128rpx;
+}
+
+.action.contact {
+  min-width: 148rpx;
+}
+
+.action.start,
+.action.complete,
+.action.confirmComplete {
+  min-width: 140rpx;
+}
+
+.action.primary {
+  background: #16a05d;
+  color: #fff;
+}
+
+.action.orange {
+  background: #ff8a18;
+  color: #fff;
+  box-shadow: 0 8rpx 18rpx rgba(255, 138, 0, 0.18);
+}
+
+.action.outline-orange {
+  min-width: 132rpx;
+  border: 1rpx solid #ff8a00;
+  background: #fff;
+  color: #ff8a00;
+  box-shadow: none;
+}
+
+.action.secondary {
+  border: 1rpx solid #d9e5df;
+  background: #fff;
+  color: #405049;
+}
+
+.action.disabled,
+.action[disabled] {
+  border-color: #e5e7eb;
+  background: #f3f4f6;
+  color: #98a2b3;
+  box-shadow: none;
+}
+
+.action.danger {
+  background: #fff0eb;
+  color: #d9573d;
+}

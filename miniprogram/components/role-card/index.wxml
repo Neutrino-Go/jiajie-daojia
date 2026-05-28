@@ -1,0 +1,7 @@
+<button class="role-card {{theme}}" bindtap="tap">
+  <view class="icon">{{icon}}</view>
+  <view class="body">
+    <view class="title">{{title}}</view>
+    <view class="desc">{{desc}}</view>
+  </view>
+</button>

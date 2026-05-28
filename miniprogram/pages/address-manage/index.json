@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "常用地址",
+  "usingComponents": {
+    "empty-state": "/components/empty-state/index"
+  }
+}

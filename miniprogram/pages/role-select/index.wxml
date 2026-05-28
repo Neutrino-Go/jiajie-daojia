@@ -1,0 +1,33 @@
+<view class="role-page">
+  <view class="brand-section">
+    <view class="brand-lockup">
+      <image class="brand-logo" src="/images/brand/brand-logo.png" mode="aspectFit"></image>
+      <view class="brand-name">家洁到家</view>
+    </view>
+    <view class="brand-slogan">让每一次家庭清洁，都更安心、更高效</view>
+  </view>
+
+  <view class="role-list">
+    <view class="role-card customer" data-role="customer" bindtap="chooseRole">
+      <view class="role-icon">
+        <image class="role-icon-img" src="/images/brand/role-home.svg" mode="aspectFit"></image>
+      </view>
+      <view class="role-body">
+        <view class="role-title">我是住户</view>
+        <view class="role-desc">发布需求，预约服务</view>
+      </view>
+      <view class="chevron">›</view>
+    </view>
+
+    <view class="role-card cleaner" data-role="cleaner" bindtap="chooseRole">
+      <view class="role-icon">
+        <image class="role-icon-img" src="/images/brand/role-cleaner.svg" mode="aspectFit"></image>
+      </view>
+      <view class="role-body">
+        <view class="role-title">我是家洁师</view>
+        <view class="role-desc">接单服务，灵活工作</view>
+      </view>
+      <view class="chevron">›</view>
+    </view>
+  </view>
+</view>

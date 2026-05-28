@@ -1,0 +1,46 @@
+﻿<view class="page">
+  <view>
+    <view class="title">订单</view>
+    <view class="subtitle">{{isCustomer ? '查看你的保洁需求进度。' : '查看接单进度与服务收入。'}}</view>
+  </view>
+
+  <view class="tabs-wrap">
+    <scroll-view class="tabs-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+      <view class="tabs-row">
+        <view
+          wx:for="{{tabs}}"
+          wx:key="key"
+          data-key="{{item.key}}"
+          bindtap="switchTab"
+          class="tab {{active === item.key ? 'active' : ''}} {{item.count > 0 ? 'has-badge' : ''}}"
+        >
+          <text class="tab-text">{{item.name}}</text>
+          <text wx:if="{{item.count > 0}}" class="tab-badge">{{item.count > 99 ? '99+' : item.count}}</text>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+
+  <view class="list">
+    <order-card
+      wx:for="{{orders}}"
+      wx:key="_id"
+      order="{{item}}"
+      role="{{activeRole}}"
+      actions="{{item.actions}}"
+      bind:open="openOrder"
+      bind:action="handleAction"
+      bind:more="handleMore"
+    ></order-card>
+  </view>
+
+  <empty-state
+    wx:if="{{!loading && orders.length === 0}}"
+    image="/images/brand/brand-logo.png"
+    title="暂无订单"
+    tip="{{isCustomer ? '发布需求后会出现在这里' : '接单后会出现在这里'}}"
+    action-text="{{isCustomer ? '去发布' : '去接单'}}"
+    bind:action="handleEmptyAction"
+  ></empty-state>
+</view>
+

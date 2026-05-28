@@ -1,0 +1,13 @@
+.list {
+  display: grid;
+  gap: 18rpx;
+  margin-top: 24rpx;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cleaner-card-wrap {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}

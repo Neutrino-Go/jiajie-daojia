@@ -1,0 +1,7 @@
+<view class="hero-card {{theme}}">
+  <view>
+    <view class="hero-title">{{title}}</view>
+    <view class="hero-subtitle">{{subtitle}}</view>
+  </view>
+  <image wx:if="{{image}}" class="hero-image" src="{{image}}" mode="aspectFit"></image>
+</view>

@@ -1,0 +1,133 @@
+.role-page {
+  min-height: 100vh;
+  padding: 112rpx 0 48rpx;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbf9 100%);
+  box-sizing: border-box;
+}
+
+.brand-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 44rpx;
+  text-align: center;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 38rpx;
+}
+
+.brand-logo {
+  width: 148rpx;
+  height: 148rpx;
+}
+
+.brand-name {
+  color: #101814;
+  font-size: 56rpx;
+  font-weight: 750;
+  line-height: 1.1;
+}
+
+.brand-slogan {
+  max-width: 680rpx;
+  margin-top: 28rpx;
+  color: #626d68;
+  font-size: 29rpx;
+  font-weight: 300;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.role-list {
+  display: grid;
+  gap: 40rpx;
+  width: 88%;
+  margin: 92rpx auto 0;
+}
+
+.role-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 34rpx;
+  width: 100%;
+  min-height: 174rpx;
+  padding: 34rpx 42rpx;
+  border: 1rpx solid rgba(21, 45, 34, 0.06);
+  border-radius: 28rpx;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 22rpx 52rpx rgba(19, 48, 32, 0.1);
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.role-card::after {
+  border: 0;
+}
+
+.role-card:active {
+  transform: scale(0.992);
+  opacity: 0.94;
+}
+
+.role-icon {
+  display: flex;
+  flex: 0 0 104rpx;
+  align-items: center;
+  justify-content: center;
+  width: 104rpx;
+  height: 104rpx;
+  border-radius: 28rpx;
+  background: #ecfbf3;
+}
+
+.customer .role-icon {
+  background: rgba(29, 190, 96, 0.1);
+}
+
+.cleaner .role-icon {
+  background: #fff2e4;
+}
+
+.role-icon-img {
+  display: block;
+  width: 80rpx;
+  height: 80rpx;
+}
+
+.role-body {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.role-title {
+  color: #15251d;
+  font-size: 40rpx;
+  font-weight: 750;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.role-desc {
+  margin-top: 12rpx;
+  color: #838d88;
+  font-size: 28rpx;
+  font-weight: 300;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chevron {
+  flex: 0 0 auto;
+  color: #aeb6b2;
+  font-size: 58rpx;
+  font-weight: 300;
+  line-height: 1;
+}

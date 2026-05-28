@@ -1,0 +1,185 @@
+<view class="page" wx:if="{{order}}">
+  <view class="status-card {{order.status}}">
+    <view>
+      <view class="status-title">{{order.statusTitle || order.statusText}}</view>
+      <view class="status-copy">{{order.statusDesc || order.statusTip}}</view>
+    </view>
+    <view class="status-pill">{{order.statusText}}</view>
+  </view>
+
+  <view class="card section" wx:if="{{person && (!isCustomerView || cleaner)}}">
+    <view class="panel-title">{{isCustomerView ? '服务家洁师' : '客户信息'}}</view>
+    <view class="person-line">
+      <view class="avatar">
+        <image wx:if="{{person.avatarUrl}}" src="{{person.avatarUrl}}" mode="aspectFill"></image>
+        <text wx:else>{{person.avatarText}}</text>
+      </view>
+      <view class="person-main">
+        <view class="person-name">{{person.name}}</view>
+        <view class="meta">{{person.meta}}</view>
+      </view>
+      <button class="mini-btn contact-btn" bindtap="openConversation">{{isCustomerView ? '联系家洁师' : '联系客户'}}</button>
+    </view>
+  </view>
+
+  <view class="card section" wx:if="{{isCustomerView && order.status === 'waiting_confirm'}}">
+    <view class="panel-title">已有{{order.responseCount}}位家洁师响应</view>
+    <view class="response-list">
+      <view class="response-item" wx:for="{{order.responses}}" wx:key="cleanerId">
+        <view class="avatar">
+          <image wx:if="{{item.avatar || item.avatarUrl}}" src="{{item.avatar || item.avatarUrl}}" mode="aspectFill"></image>
+          <text wx:else>{{item.avatarText || '洁'}}</text>
+        </view>
+        <view class="person-main">
+          <view class="person-name">{{item.cleanerName}}</view>
+          <view class="meta">评分 {{item.rating || '暂无'}} · 已服务{{item.completedOrders || 0}}单</view>
+        </view>
+        <button
+          class="mini-btn"
+          data-cleaner-id="{{item.cleanerId}}"
+          bindtap="selectResponse"
+          wx:if="{{item.status === 'pending'}}"
+        >选择TA</button>
+        <view class="selected-pill" wx:else>{{item.status === 'selected' ? '已选择' : '未选中'}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card section">
+    <view class="panel-title">服务信息</view>
+    <view class="info-row"><text>服务类型</text><text>{{order.serviceType}}</text></view>
+    <view class="info-row"><text>服务时间</text><text>{{order.scheduledText}}</text></view>
+    <view class="info-row"><text>服务时长</text><text>{{order.durationHours || 3}}小时</text></view>
+    <view class="info-row"><text>服务地址</text><text>{{order.displayAddress}}</text></view>
+    <view class="info-row"><text>订单金额</text><text class="price">{{order.priceText}}</text></view>
+    <view class="info-row" wx:if="{{!isCustomerView}}"><text>平台服务费</text><text>{{order.platformFeeText}}</text></view>
+    <view class="info-row" wx:if="{{!isCustomerView}}"><text>预计收入</text><text class="price">{{order.cleanerIncomeText}}</text></view>
+    <view class="info-row"><text>支付状态</text><text>{{order.paymentStatusText}}</text></view>
+    <view class="payment-tip" wx:if="{{order.paymentTip}}">{{order.paymentTip}}</view>
+    <view class="info-row"><text>订单编号</text><text>{{order.displayOrderNo}}</text></view>
+    <view class="note" wx:if="{{order.note}}">{{order.note}}</view>
+  </view>
+
+  <view class="card section">
+    <view class="panel-title">联系方式</view>
+    <view wx:if="{{hasContact}}">
+      <view class="contact">
+        <view class="contact-text">
+          <view>{{contactInfo.name}}</view>
+          <view class="meta">电话：{{contactInfo.phoneText}}</view>
+        </view>
+        <button bindtap="callPhone">拨打</button>
+      </view>
+    </view>
+    <view wx:else class="locked">订单确认后双方才可查看联系方式。</view>
+  </view>
+
+  <view class="card section" wx:if="{{canComplete}}">
+    <view class="panel-title">服务完成照片（选填）</view>
+    <view class="section-tip">可上传打扫完成后的现场照片，方便客户验收。</view>
+    <view class="review-images completion-images">
+      <view wx:for="{{completionForm.imageUrls}}" wx:key="*this" class="review-image-item">
+        <image src="{{item}}" mode="aspectFill" data-url="{{item}}" bindtap="previewCompletionImage"></image>
+        <view class="image-remove" data-index="{{index}}" catchtap="removeCompletionImage">×</view>
+      </view>
+      <view wx:if="{{completionForm.imageUrls.length < 6}}" class="review-image-add" bindtap="chooseCompletionImages">
+        <view class="add-plus">+</view>
+        <view>上传照片</view>
+      </view>
+    </view>
+  </view>
+
+  <view
+    class="card section"
+    wx:if="{{order.completionPhotoUrls && order.completionPhotoUrls.length && (order.status === 'waiting_complete' || order.status === 'waiting_acceptance' || order.status === 'completed' || order.status === 'auto_completed')}}"
+  >
+    <view class="panel-title">服务完成照片</view>
+    <view class="review-images readonly">
+      <view wx:for="{{order.completionPhotoUrls}}" wx:key="*this" class="review-image-item">
+        <image src="{{item}}" mode="aspectFill" data-url="{{item}}" bindtap="previewCompletionRecordImage"></image>
+      </view>
+    </view>
+  </view>
+
+  <view
+    class="toolbar"
+    wx:if="{{canAccept || canDecline || canCancel || canPay || canStart || canComplete || canReassign || canRepublish}}"
+  >
+    <button wx:if="{{canAccept}}" class="btn btn-primary action-btn" bindtap="acceptOrder">{{order.publishMode === 'public' ? '响应订单' : '接受订单'}}</button>
+    <button wx:if="{{canDecline}}" class="btn btn-ghost action-btn" bindtap="declineOrder">拒绝</button>
+    <button wx:if="{{canCancel}}" class="btn btn-danger action-btn" bindtap="cancelOrder">取消订单</button>
+    <button wx:if="{{canPay}}" class="btn btn-orange action-btn" bindtap="payOrder">立即支付</button>
+    <button wx:if="{{canStart}}" class="btn btn-primary action-btn" bindtap="startOrder">开始服务</button>
+    <button
+      wx:if="{{canComplete}}"
+      class="btn btn-primary action-btn"
+      loading="{{completionSubmitting}}"
+      disabled="{{completionSubmitting || completionUploading}}"
+      bindtap="completeOrder"
+    >提交完成</button>
+    <button wx:if="{{canReassign}}" class="btn btn-secondary action-btn" bindtap="reassignCleaner">重新指派</button>
+    <button wx:if="{{canRepublish}}" class="btn btn-ghost action-btn" bindtap="republishPublic">改为公开</button>
+  </view>
+
+  <view class="card section" wx:if="{{canConfirmComplete || canReview || canEditReview}}">
+    <view class="review-section-head">
+      <view class="panel-title">{{canConfirmComplete ? '验收并评价' : canEditReview ? '修改评价' : '服务评价'}}</view>
+      <button wx:if="{{canSaveCleaner}}" class="save-cleaner-chip {{cleanerSaved ? 'saved' : ''}}" bindtap="saveCleaner">
+        {{cleanerSaved ? '已收藏' : '收藏家洁师'}}
+      </button>
+    </view>
+    <view class="rating-title">服务评分</view>
+    <view class="rating-line">
+      <view id="ratingStars" class="rating-stars" bindtouchstart="onRatingTouch" bindtouchmove="onRatingTouch">
+        <view wx:for="{{starItems}}" wx:key="index" class="rating-star">
+          <view class="star-shape star-base"></view>
+          <view class="star-fill-wrap" style="width: {{item.fillPercent}}%;">
+            <view class="star-shape star-fill-shape"></view>
+          </view>
+          <view class="star-hit left" data-value="{{item.leftValue}}" catchtap="onRatingTap"></view>
+          <view class="star-hit right" data-value="{{item.rightValue}}" catchtap="onRatingTap"></view>
+        </view>
+      </view>
+      <view class="rating-result" wx:if="{{reviewForm.rating}}">
+        <text class="rating-value">{{ratingValueText}}</text>
+        <text class="rating-label">{{ratingText}}</text>
+      </view>
+      <view class="rating-empty" wx:else>请选择评分</view>
+    </view>
+    <view class="review-label">说说这次服务体验</view>
+    <textarea class="textarea review" value="{{reviewForm.content}}" bindinput="onReviewInput" placeholder="说说这次服务体验"></textarea>
+    <view class="review-images">
+      <view wx:for="{{reviewForm.imageUrls}}" wx:key="*this" class="review-image-item">
+        <image src="{{item}}" mode="aspectFill" data-url="{{item}}" bindtap="previewReviewImage"></image>
+        <view class="image-remove" data-index="{{index}}" catchtap="removeReviewImage">×</view>
+      </view>
+      <view wx:if="{{reviewForm.imageUrls.length < 6}}" class="review-image-add" bindtap="chooseReviewImages">
+        <view class="add-plus">+</view>
+        <view>上传照片</view>
+      </view>
+    </view>
+    <button
+      wx:if="{{canConfirmComplete}}"
+      class="btn review-submit {{reviewForm.rating ? '' : 'disabled'}}"
+      disabled="{{!reviewForm.rating}}"
+      bindtap="confirmComplete"
+    >确认完成并提交</button>
+    <button
+      wx:else
+      class="btn review-submit {{reviewForm.rating ? '' : 'disabled'}}"
+      disabled="{{!reviewForm.rating}}"
+      bindtap="submitReview"
+    >{{canEditReview ? '确认修改评价' : '提交评价'}}</button>
+  </view>
+
+  <view class="card section" wx:if="{{review && !canEditReview}}">
+    <view class="panel-title">服务评价</view>
+    <view class="review-stars">{{review.rating}}分 {{review.ratingText || ''}}</view>
+    <view class="meta">{{review.content}}</view>
+    <view wx:if="{{review.imageUrls && review.imageUrls.length}}" class="review-images readonly">
+      <view wx:for="{{review.imageUrls}}" wx:key="*this" class="review-image-item">
+        <image src="{{item}}" mode="aspectFill" data-url="{{item}}" bindtap="previewSavedReviewImage"></image>
+      </view>
+    </view>
+  </view>
+</view>

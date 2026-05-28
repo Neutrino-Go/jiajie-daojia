@@ -1,0 +1,42 @@
+.review-list {
+  display: grid;
+  gap: 16rpx;
+  margin-top: 24rpx;
+}
+
+.review-card {
+  padding: 24rpx;
+  border-radius: 20rpx;
+  background: #fff;
+}
+
+.stars {
+  color: #ff8a18;
+  font-weight: 900;
+}
+
+.content {
+  margin-top: 12rpx;
+  color: #17231d;
+  line-height: 1.5;
+}
+
+.review-images {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12rpx;
+  margin-top: 16rpx;
+}
+
+.review-image {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 12rpx;
+  background: #f6f8f7;
+}
+
+.time {
+  margin-top: 10rpx;
+  color: #8a9490;
+  font-size: 22rpx;
+}

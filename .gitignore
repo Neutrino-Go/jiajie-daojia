@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+miniprogram/miniprogram_npm/
+cloudfunctions/**/node_modules/
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+# WeChat DevTools local state
+.wechat-localappdata/
+.wechat-temp/
+.wechat-userprofile/
+project.private.config.json
+
+# Local build/cache output
+dist/
+build/
+coverage/
+
+# Local preview and debug screenshots generated during UI work
+*-preview*.png
+*-screenshot*.png
+banner-image-test.png
+home-logo-card-before-after.png
+home-logo-replacement-preview.png
+income-detail-static-preview.png
+income-stats-static-preview.png
+role-cleaner-preview.png
+role-select-preview.png
+role-select-brand-green-preview.png

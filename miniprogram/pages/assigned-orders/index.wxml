@@ -1,0 +1,17 @@
+﻿<view class="page">
+  <view class="title">指派给我</view>
+  <view class="subtitle">客户指定你服务的待处理订单。</view>
+  <view class="list">
+    <order-card
+      wx:for="{{orders}}"
+      wx:key="_id"
+      order="{{item}}"
+      role="cleaner"
+      actions="{{item.actions}}"
+      bind:open="openOrder"
+      bind:action="handleAction"
+    ></order-card>
+  </view>
+  <empty-state wx:if="{{!loading && orders.length === 0}}" image="/images/brand/brand-logo.png" title="暂无指派订单" tip="客户再约你后会出现在这里"></empty-state>
+</view>
+

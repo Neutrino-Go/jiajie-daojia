@@ -1,0 +1,74 @@
+<view class="location-page">
+  <view class="title">{{pageTitle}}</view>
+  <view class="subtitle">{{pageSubtitle}}</view>
+
+  <view class="card">
+    <view class="field-label">省 / 市 / 区</view>
+    <picker mode="region" value="{{region}}" bindchange="onRegionChange">
+      <view class="picker-row">
+        <text>{{regionLabel || '请手动确认省市区'}}</text>
+        <text class="arrow">›</text>
+      </view>
+    </picker>
+  </view>
+
+  <view class="card" wx:if="{{!isCleanerMode}}">
+    <view class="field-label">街道（可选）</view>
+    <picker wx:if="{{hasStreetOptions}}" mode="selector" range="{{streetOptions}}" value="{{streetIndex}}" bindchange="onStreetChange">
+      <view class="picker-row">
+        <text>{{street || '请选择街道（可选）'}}</text>
+        <text class="arrow">›</text>
+      </view>
+    </picker>
+    <input
+      wx:else
+      class="search"
+      value="{{street}}"
+      bindinput="onStreetInput"
+      placeholder="请手动输入街道（可选）"
+    />
+  </view>
+
+  <view class="card" wx:if="{{!isCleanerMode}}">
+    <view class="field-label">小区 / 社区名称</view>
+    <input class="search" value="{{community}}" bindinput="onCommunityInput" placeholder="手动输入小区名称，例如：阳光花园" />
+    <view class="input-tip">输入后会用于首页地址、发布需求地址预填和最近使用地址。</view>
+  </view>
+
+  <view class="card current-card">
+    <view class="current-head">
+      <view>
+        <view class="field-label">当前位置</view>
+        <view class="current-text">{{currentPositionText}}</view>
+      </view>
+      <button class="relocate" loading="{{locating}}" bindtap="locate">重新定位</button>
+    </view>
+    <map
+      wx:if="{{currentPosition}}"
+      class="current-map"
+      latitude="{{currentPosition.latitude}}"
+      longitude="{{currentPosition.longitude}}"
+      markers="{{currentMarkers}}"
+      scale="16"
+      show-location
+    ></map>
+    <view wx:else class="map-placeholder">等待定位授权后显示地图位置</view>
+  </view>
+
+  <view class="card" wx:if="{{!isCleanerMode}}">
+    <view class="field-label">最近使用</view>
+    <view wx:if="{{recent.length}}">
+      <view wx:for="{{recent}}" wx:key="community" class="recent-row">
+        <button
+          class="recent"
+          data-index="{{index}}"
+          bindtap="useRecent"
+        >{{item.community}} · {{item.district}}</button>
+        <button class="recent-delete" data-index="{{index}}" catchtap="deleteRecent">×</button>
+      </view>
+    </view>
+    <view wx:else class="recent-empty">暂无最近使用地址</view>
+  </view>
+
+  <button class="confirm" bindtap="confirm">确认选择</button>
+</view>

@@ -1,0 +1,17 @@
+.status-switch {
+  min-width: 170rpx;
+  min-height: 62rpx;
+  padding: 0 28rpx;
+  border-radius: 999rpx;
+  color: #fff;
+  font-size: 25rpx;
+  font-weight: 900;
+}
+
+.on {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.off {
+  background: rgba(0, 0, 0, 0.16);
+}

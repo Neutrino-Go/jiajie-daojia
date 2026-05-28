@@ -1,0 +1,42 @@
+﻿<view class="page">
+  <view class="title">{{isCleaner ? '收到的评价' : '好评家洁师'}}</view>
+  <view class="subtitle">{{isCleaner ? '客户完成服务后提交的评价。' : '查看附近高评分家洁师。'}}</view>
+
+  <view wx:if="{{isCleaner}}" class="review-list">
+    <view wx:for="{{reviews}}" wx:for-index="reviewIndex" wx:key="_id" class="review-card">
+      <view class="stars">★ {{item.ratingText}}</view>
+      <view class="content">{{item.content || '客户未填写文字评价'}}</view>
+      <view wx:if="{{item.imageUrls && item.imageUrls.length}}" class="review-images">
+        <image
+          wx:for="{{item.imageUrls}}"
+          wx:for-item="url"
+          wx:key="*this"
+          class="review-image"
+          src="{{url}}"
+          mode="aspectFill"
+          data-url="{{url}}"
+          data-index="{{reviewIndex}}"
+          bindtap="previewImage"
+        ></image>
+      </view>
+      <view class="time">{{item.timeText}}</view>
+    </view>
+  </view>
+
+  <empty-state
+    wx:if="{{isCleaner && !loading && reviews.length === 0}}"
+    image="/images/brand/brand-logo.png"
+    title="暂无评价"
+    tip="完成订单并被客户评价后会显示"
+  ></empty-state>
+
+  <empty-state
+    wx:if="{{!isCleaner}}"
+    image="/images/brand/brand-logo.png"
+    title="去看看好评家洁师"
+    tip="按评分排序的附近家洁师列表"
+    action-text="查看家洁师"
+    bind:action="goCleaners"
+  ></empty-state>
+</view>
+

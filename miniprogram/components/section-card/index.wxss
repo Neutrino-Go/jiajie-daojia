@@ -1,0 +1,14 @@
+.section-card {
+  width: 100%;
+  padding: 26rpx;
+  border-radius: 22rpx;
+  background: #fff;
+  box-shadow: 0 10rpx 30rpx rgba(28, 76, 51, 0.06);
+}
+
+.section-title {
+  margin-bottom: 20rpx;
+  color: #17231d;
+  font-size: 30rpx;
+  font-weight: 900;
+}

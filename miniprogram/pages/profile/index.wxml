@@ -1,0 +1,146 @@
+<view class="profile-page {{isCustomer ? 'resident' : 'cleaner'}}">
+  <view class="brand-card">
+    <view class="edit-profile-btn" bindtap="openProfileEditor" aria-label="编辑资料">
+      <view class="edit-pencil"></view>
+    </view>
+    <view class="brand-content">
+      <view class="profile-avatar" bindtap="chooseProfileAvatar">
+        <image wx:if="{{profileAvatarUrl}}" src="{{profileAvatarUrl}}" mode="aspectFill"></image>
+        <text wx:else>{{profileAvatar}}</text>
+      </view>
+      <view class="profile-main">
+        <view class="profile-name">{{profileName}}</view>
+        <view class="profile-phone">{{profileSub}}</view>
+        <view class="community-block">
+          <view wx:if="{{isCustomer}}" class="community-pill">
+            <view class="community-pin"></view>
+            <text>{{customerAddress}}</text>
+          </view>
+          <view wx:else class="community-pill">
+            <view class="status-dot"></view>
+            <text>{{cleanerAvailable ? '接单中' : '休息中'}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+    <image class="brand-watermark" src="/images/brand/brand-logo-watermark.png" mode="aspectFit"></image>
+    <view wx:if="{{!isCustomer}}" class="switch-wrap">
+      <status-switch checked="{{cleanerAvailable}}" bind:change="onAvailabilityChange"></status-switch>
+    </view>
+  </view>
+
+  <view class="shortcut-card">
+    <view wx:if="{{isCustomer}}" class="shortcut" bindtap="goCustomerOrders" hover-class="shortcut-hover">
+      <view class="shortcut-icon icon-green">
+        <image class="icon-img" src="/images/profile-icons/order.svg" mode="aspectFit"></image>
+      </view>
+      <view class="shortcut-label">我的订单</view>
+    </view>
+    <view wx:else class="shortcut" bindtap="goCleanerOrders" hover-class="shortcut-hover">
+      <view class="shortcut-icon icon-green">
+        <image class="icon-img" src="/images/profile-icons/order.svg" mode="aspectFit"></image>
+      </view>
+      <view class="shortcut-label">我的订单</view>
+    </view>
+
+    <view wx:if="{{isCustomer}}" class="shortcut" bindtap="goSaved" hover-class="shortcut-hover">
+      <view class="shortcut-icon icon-star-bg">
+        <image class="icon-img" src="/images/profile-icons/star.svg" mode="aspectFit"></image>
+      </view>
+      <view class="shortcut-label">我的收藏</view>
+    </view>
+    <view wx:else class="shortcut" bindtap="showIncome" hover-class="shortcut-hover">
+      <view class="shortcut-icon icon-gold">
+        <image class="icon-img" src="/images/profile-icons/income.svg" mode="aspectFit"></image>
+      </view>
+      <view class="shortcut-label">收入统计</view>
+    </view>
+
+    <view wx:if="{{isCustomer}}" class="shortcut" bindtap="openCustomerAddress" hover-class="shortcut-hover">
+      <view class="shortcut-icon icon-teal">
+        <image class="icon-img" src="/images/profile-icons/location.svg" mode="aspectFit"></image>
+      </view>
+      <view class="shortcut-label">常用地址</view>
+    </view>
+    <view wx:else class="shortcut" bindtap="showReviews" hover-class="shortcut-hover">
+      <view class="shortcut-icon icon-blue">
+        <image class="icon-img" src="/images/profile-icons/review.svg" mode="aspectFit"></image>
+      </view>
+      <view class="shortcut-label">服务评价</view>
+    </view>
+
+    <view wx:if="{{isCustomer}}" class="shortcut" bindtap="showCoupon" hover-class="shortcut-hover">
+      <view class="shortcut-icon icon-coupon-bg">
+        <image class="icon-img" src="/images/profile-icons/ticket.svg" mode="aspectFit"></image>
+      </view>
+      <view class="shortcut-label">优惠券</view>
+    </view>
+    <view wx:else class="shortcut" bindtap="showCleanerProfile" hover-class="shortcut-hover">
+      <view class="shortcut-icon icon-orange">
+        <image class="icon-img" src="/images/profile-icons/user-card.svg" mode="aspectFit"></image>
+      </view>
+      <view class="shortcut-label">我的资料</view>
+    </view>
+  </view>
+
+  <view wx:if="{{!isCustomer}}" class="section-title record-title">社区服务记录</view>
+  <view wx:if="{{!isCustomer}}" class="asset-card community-record-stats">
+    <view class="asset-item" wx:for="{{assetStats}}" wx:key="label" data-action="{{item.action}}" bindtap="handleAssetTap">
+      <view class="asset-value">{{item.value}}</view>
+      <view class="asset-label">{{item.label}}</view>
+    </view>
+  </view>
+
+  <view class="section-title">服务中心</view>
+  <view class="service-card">
+    <view class="menu-row" bindtap="contactService" hover-class="menu-row-hover">
+      <view class="menu-left">
+        <view class="menu-icon">
+          <image class="menu-icon-img" src="/images/profile-icons/headset.svg" mode="aspectFit"></image>
+        </view>
+        <view class="menu-text">联系客服</view>
+      </view>
+      <view class="chevron">›</view>
+    </view>
+    <view class="menu-row" bindtap="feedback" hover-class="menu-row-hover">
+      <view class="menu-left">
+        <view class="menu-icon">
+          <image class="menu-icon-img" src="/images/profile-icons/feedback.svg" mode="aspectFit"></image>
+        </view>
+        <view class="menu-text">意见反馈</view>
+      </view>
+      <view class="chevron">›</view>
+    </view>
+    <view class="menu-row" bindtap="settings" hover-class="menu-row-hover">
+      <view class="menu-left">
+        <view class="menu-icon menu-icon-gray">
+          <image class="menu-icon-img" src="/images/profile-icons/setting.svg" mode="aspectFit"></image>
+        </view>
+        <view class="menu-text">设置</view>
+      </view>
+      <view class="chevron">›</view>
+    </view>
+  </view>
+
+  <view wx:if="{{editProfileVisible}}" class="profile-edit-mask" bindtap="closeProfileEditor">
+    <view class="profile-edit-panel" catchtap="noop">
+      <view class="profile-edit-title">编辑个人资料</view>
+      <view class="edit-avatar" bindtap="chooseProfileAvatar">
+        <image wx:if="{{editProfileForm.avatarUrl}}" src="{{editProfileForm.avatarUrl}}" mode="aspectFill"></image>
+        <text wx:else>{{profileAvatar}}</text>
+      </view>
+      <view class="edit-field">
+        <view class="edit-label">昵称</view>
+        <input value="{{editProfileForm.nickname}}" data-field="nickname" bindinput="onProfileFieldInput" placeholder="请输入昵称" />
+      </view>
+      <view class="edit-field">
+        <view class="edit-label">手机号（选填）</view>
+        <input value="{{editProfileForm.phone}}" data-field="phone" bindinput="onProfileFieldInput" placeholder="后续可再填写" type="number" />
+      </view>
+      <view class="edit-actions">
+        <button class="edit-cancel" bindtap="closeProfileEditor">取消</button>
+        <button class="edit-save" bindtap="submitProfileEditor">保存</button>
+      </view>
+    </view>
+  </view>
+</view>
