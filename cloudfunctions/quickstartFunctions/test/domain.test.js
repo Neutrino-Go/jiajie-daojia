@@ -476,7 +476,14 @@ assert.strictEqual(roleAwareStatusLabel("waiting_complete", "customer"), "待验
 assert.strictEqual(roleAwareStatusLabel("waiting_complete", "cleaner"), "待客户验收");
 assert.strictEqual(roleAwareStatusLabel("waiting_acceptance", "customer"), "待验收");
 assert.strictEqual(roleAwareStatusLabel("waiting_acceptance", "cleaner"), "待客户验收");
+assert.strictEqual(roleAwareStatusLabel("assigned_pending", "customer"), "等待家洁师接单");
+assert.strictEqual(roleAwareStatusLabel("assigned_pending", "cleaner"), "待接单");
 assert.strictEqual(roleAwareStatusTip("confirmed", "cleaner"), "订单已确认，请按约定时间上门服务");
+assert.strictEqual(
+  decorateOrder({ _id: "assigned-pending-order", status: "assigned_pending", publishMode: "assigned" }, "cleaner-a", "cleaner").statusBadgeText,
+  "待接单"
+);
+assert.strictEqual(decorateOrder({ _id: "unknown-status-order", status: "mystery_status" }, "", "customer").statusBadgeText, "状态未知");
 
 const shanghaiDaily = miniprogramPricing.calculateOrderPrice({
   city: "上海市",

@@ -1,10 +1,13 @@
-const {
-  STATUS_LABELS,
-  STATUS_TIPS,
-} = require("./constants");
 const { calculateDistanceKm, distanceDisplay } = require("./location");
 const { normalizeCleanerStats } = require("./cleaner-stats");
 const { BASE_PRICING, calculateOrderPrice } = require("../config/pricing");
+const {
+  normalizeOrderStatus: normalizeOrderStatusValue,
+  getOrderStatusMeta,
+  getOrderStatusStyle,
+  getOrderStatusGroup,
+  getOrderTabStatuses,
+} = require("./order-status");
 
 function roundMoney(value) {
   return Math.round(Number(value || 0) * 100) / 100;
@@ -16,11 +19,11 @@ function formatMoney(value) {
 }
 
 function statusLabel(status) {
-  return STATUS_LABELS[status] || "未知状态";
+  return getOrderStatusMeta(status).title;
 }
 
 function statusTip(status) {
-  return STATUS_TIPS[status] || "";
+  return getOrderStatusMeta(status).desc;
 }
 
 function displayText(value) {
@@ -31,133 +34,13 @@ function hasFiniteValue(value) {
   return value !== undefined && value !== null && value !== "" && Number.isFinite(Number(value));
 }
 
-const ORDER_STATUS_COPY = {
-  customer: {
-    waiting_response: {
-      title: "等待家洁师响应",
-      desc: "需求已发布，正在等待附近家洁师响应",
-      badgeText: "待响应",
-    },
-    waiting_confirm: {
-      title: "待确认",
-      desc: "已有家洁师响应，请选择合适的家洁师",
-      badgeText: "待确认",
-    },
-    assigned_waiting_accept: {
-      title: "等待家洁师接单",
-      desc: "已指定家洁师，等待对方确认是否接单",
-      badgeText: "待接单",
-    },
-    assigned_declined: {
-      title: "家洁师已拒绝",
-      desc: "家洁师已拒绝，可重新指派或改为公开订单",
-      badgeText: "已拒绝",
-    },
-    waiting_payment: {
-      title: "待支付",
-      desc: "已选择家洁师，请完成支付后等待上门服务",
-      badgeText: "待支付",
-    },
-    confirmed: {
-      title: "待服务",
-      desc: "家洁师已确认，等待按约定时间上门服务",
-      badgeText: "待服务",
-    },
-    in_service: {
-      title: "服务中",
-      desc: "家洁师正在服务，请留意沟通消息",
-      badgeText: "服务中",
-    },
-    waiting_complete: {
-      title: "待验收",
-      desc: "家洁师已提交完成，请验收并评价本次服务",
-      badgeText: "待验收",
-    },
-    completed: {
-      title: "已完成",
-      desc: "服务已完成，感谢你的使用",
-      badgeText: "已完成",
-    },
-    auto_completed: {
-      title: "系统已完成",
-      desc: "超时未验收，系统已自动完成订单",
-      badgeText: "已完成",
-    },
-    cancelled: {
-      title: "已取消",
-      desc: "订单已取消",
-      badgeText: "已取消",
-    },
-  },
-  cleaner: {
-    waiting_response: {
-      title: "可响应订单",
-      desc: "客户需求已发布，可选择是否接单",
-      badgeText: "可响应",
-    },
-    waiting_confirm: {
-      title: "待客户确认",
-      desc: "你已响应此订单，等待客户确认是否选择你",
-      badgeText: "待客户确认",
-    },
-    assigned_waiting_accept: {
-      title: "待接单",
-      desc: "客户已指定你服务，请确认是否接单",
-      badgeText: "待接单",
-    },
-    assigned_declined: {
-      title: "已拒绝",
-      desc: "你已拒绝该指派订单",
-      badgeText: "已拒绝",
-    },
-    waiting_payment: {
-      title: "待客户支付",
-      desc: "客户完成支付后，你即可按约定时间上门服务",
-      badgeText: "待支付",
-    },
-    confirmed: {
-      title: "待服务",
-      desc: "订单已确认，请按约定时间上门服务",
-      badgeText: "待服务",
-    },
-    in_service: {
-      title: "服务中",
-      desc: "订单服务进行中，完成后可提交服务完成",
-      badgeText: "服务中",
-    },
-    waiting_complete: {
-      title: "待客户验收",
-      desc: "你已提交完成，等待客户验收确认",
-      badgeText: "待验收",
-    },
-    completed: {
-      title: "已完成",
-      desc: "客户已完成验收，订单已结束",
-      badgeText: "已完成",
-    },
-    auto_completed: {
-      title: "系统已完成",
-      desc: "客户逾期未验收，系统已自动完成订单",
-      badgeText: "已完成",
-    },
-    cancelled: {
-      title: "已取消",
-      desc: "订单已取消",
-      badgeText: "已取消",
-    },
-  },
-};
-
 function getOrderStatusCopy(status, role = "customer") {
-  const normalized = normalizeOrderStatus({ status });
-  const map = ORDER_STATUS_COPY[role] || ORDER_STATUS_COPY.customer;
-  const fallbackLabel = statusLabel(normalized) || "待处理";
-  const copy = map[normalized] || {
-    title: fallbackLabel === "未知状态" ? "订单状态" : fallbackLabel,
-    desc: statusTip(normalized),
-    badgeText: fallbackLabel || "待处理",
+  const meta = getOrderStatusMeta(status, { role });
+  return {
+    title: meta.title,
+    desc: meta.desc,
+    badgeText: meta.badgeText,
   };
-  return { ...copy };
 }
 
 function roleAwareStatusLabel(status, role = "customer") {
@@ -169,13 +52,7 @@ function roleAwareStatusTip(status, role = "customer") {
 }
 
 function normalizeOrderStatus(order) {
-  if (!order) return "";
-  if (order.status === "pending") {
-    return order.publishMode === "assigned" ? "assigned_waiting_accept" : "waiting_response";
-  }
-  if (order.status === "accepted") return "confirmed";
-  if (order.status === "waiting_acceptance") return "waiting_complete";
-  return order.status;
+  return normalizeOrderStatusValue(order);
 }
 
 function normalizePaymentStatus(order) {
@@ -218,16 +95,7 @@ function paymentStatusTip(paymentStatus, role = "customer") {
 }
 
 function getUserOrderStatusGroup(order) {
-  const status = normalizeOrderStatus(order);
-  if (["waiting_response", "waiting_confirm", "assigned_waiting_accept", "assigned_declined", "pending"].includes(status)) {
-    return "pending";
-  }
-  if (["waiting_payment", "confirmed", "in_service", "waiting_complete"].includes(status)) {
-    return "ongoing";
-  }
-  if (status === "completed" || status === "auto_completed") return "completed";
-  if (status === "cancelled") return "cancelled";
-  return "pending";
+  return getOrderStatusGroup(order);
 }
 
 function orderStatusCandidates(order) {
@@ -238,12 +106,7 @@ function orderStatusCandidates(order) {
 function getOrderTabCount(tabKey, orders, role = "customer") {
   const key = tabKey === "active" ? "ongoing" : tabKey;
   if (key !== "pending" && key !== "ongoing") return 0;
-  const pendingStatuses =
-    role === "cleaner"
-      ? ["waiting_response", "waiting_confirm", "assigned_pending", "assigned_waiting_accept"]
-      : ["waiting_response", "waiting_confirm"];
-  const ongoingStatuses = ["confirmed", "accepted", "in_service", "waiting_complete", "waiting_acceptance", "waiting_payment"];
-  const targetStatuses = key === "pending" ? pendingStatuses : ongoingStatuses;
+  const targetStatuses = getOrderTabStatuses(key, role);
   return (orders || []).filter((order) => orderStatusCandidates(order).some((status) => targetStatuses.includes(status))).length;
 }
 
@@ -260,13 +123,7 @@ function withOrderTabCounts(tabs, orders, role = "customer") {
 }
 
 function orderStatusStyle(status) {
-  const normalized = normalizeOrderStatus({ status });
-  if (normalized === "completed" || normalized === "auto_completed") return "completed";
-  if (normalized === "cancelled") return "cancelled";
-  if (normalized === "in_service" || normalized === "waiting_complete") return "active";
-  if (normalized === "waiting_payment") return "payment";
-  if (normalized === "confirmed" || normalized === "accepted") return "accepted";
-  return "waiting";
+  return getOrderStatusStyle(status);
 }
 
 function shortDate(value) {
@@ -530,7 +387,8 @@ function decorateOrder(order, openid, role = "", referenceLocation = null) {
   const isCustomer = order.customerOpenid === openid;
   const isCleaner = order.acceptedCleanerOpenid === openid || order.assignedCleanerOpenid === openid;
   const viewerRole = role || (isCustomer ? "customer" : isCleaner ? "cleaner" : "");
-  const displayStatus = normalizeOrderStatus(order);
+  const statusMeta = getOrderStatusMeta(order, { role: viewerRole });
+  const displayStatus = statusMeta.key === "unknown" ? normalizeOrderStatus(order) : statusMeta.key;
   const price = estimatePrice(order);
   const commission = commissionFor(price);
   const platformFee = Number(order.platformFee || commission.platformFee);
@@ -538,9 +396,12 @@ function decorateOrder(order, openid, role = "", referenceLocation = null) {
   const paymentStatus = normalizePaymentStatus({ ...order, status: displayStatus });
   const distanceFields = orderDistanceFields(order, referenceLocation);
   const locationText = [distanceFields.orderLocation.city, distanceFields.orderLocation.district].filter(Boolean).join(" ");
-  const statusCopy = getOrderStatusCopy(displayStatus, viewerRole);
-  const statusBadgeText =
-    displayText(statusCopy.badgeText) || displayText(statusCopy.title) || displayText(statusLabel(displayStatus)) || "待处理";
+  const statusCopy = {
+    title: statusMeta.title,
+    desc: statusMeta.desc,
+    badgeText: statusMeta.badgeText,
+  };
+  const statusBadgeText = displayText(statusMeta.badgeText) || displayText(statusMeta.title) || "状态未知";
   const reviewBadgeText = order.hasReview || order.reviewId ? "已评价" : "";
   const nonLocalText = order.nonLocal ? "非同城" : "";
   const rawDistanceText = displayText(distanceFields.distanceText || order.distanceText);
@@ -579,9 +440,9 @@ function decorateOrder(order, openid, role = "", referenceLocation = null) {
     statusBadgeText,
     statusTitle: statusCopy.title,
     statusDesc: statusCopy.desc,
-    statusStyle: orderStatusStyle(displayStatus),
+    statusStyle: statusMeta.statusStyle,
     statusTip: statusCopy.desc,
-    statusGroup: getUserOrderStatusGroup({ ...order, status: displayStatus }),
+    statusGroup: statusMeta.statusGroup,
     paymentStatus,
     paymentStatusText: paymentStatusText(paymentStatus, viewerRole),
     paymentTip: paymentStatusTip(paymentStatus, viewerRole),
