@@ -1,0 +1,5 @@
+{
+  "scripts": {
+    "review:pack": "node scripts/create-review-package.js"
+  }
+}
