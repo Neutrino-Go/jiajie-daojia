@@ -6,6 +6,7 @@ const cp = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const REVIEW_ROOT = path.join(ROOT, "review-packages");
+const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 const LIST_ARGS = new Set([
   "goal",
@@ -17,7 +18,68 @@ const LIST_ARGS = new Set([
   "manual-check",
   "not-tested",
   "risk",
+  "context",
+  "test-log-file",
+  "test-command",
 ]);
+
+const BOOLEAN_ARGS = new Set(["help"]);
+
+function printHelp() {
+  console.log(`Usage:
+  node scripts/create-review-package.js --version v0.3.6 --theme order-card-layout-fix [options]
+
+Core options:
+  --version <version>          Review package version, for example v0.3.6.
+  --theme <slug>               Short ASCII theme used in directory and zip names.
+  --title <text>               Human-readable iteration title.
+  --base <commit>              Base commit for committed diff range. Defaults to merge-base HEAD origin/dev, then HEAD~1.
+  --max-file-mb <number>       Max copied file size. Default: 5.
+
+Review metadata options:
+  --goal <text>                Iteration goal. Repeatable, also supports "|" separated values.
+  --not-modified <text>        Explicit non-goal scope. Repeatable.
+  --acceptance <text>          Acceptance checklist item. Repeatable.
+  --known-issue <text>         Known issue. Repeatable.
+  --review-focus <text>        GPT review focus. Repeatable.
+  --manual-check <text>        Manual check note. Repeatable.
+  --not-tested <text>          Untested area. Repeatable.
+  --risk <text>                Risk item. Repeatable.
+
+Test evidence options:
+  --test <text>                Free-form test note. Repeatable.
+  --test-command <command>     Execute command and capture exit code/stdout/stderr into 09_TEST_REPORT.md and 09_TEST_LOGS/.
+                              Repeatable. Example: --test-command "npm.cmd test --prefix cloudfunctions/quickstartFunctions"
+  --test-log-file <path>       Copy an existing test log into 09_TEST_LOGS/. Repeatable.
+
+Context options:
+  --context <path>             Manually include related context file in 08_RELATED_CONTEXT_FILES/.
+                              Repeatable and supports "|" separated values.
+
+Modes:
+  committed clean mode:
+    When the working tree is clean, the package defaults to baseCommit..HEAD.
+    baseCommit priority: --base, merge-base HEAD origin/dev, HEAD~1, then single HEAD fallback.
+
+  dirty working-tree mode:
+    When the working tree has changes, the package contains:
+    1. committed changes since baseCommit,
+    2. staged/unstaged changes from HEAD to working tree,
+    3. safe untracked files as generated pseudo diff.
+
+Safety filtering:
+  05_FULL_DIFF.patch is generated only for safe paths.
+  Unsafe paths are excluded from copied files and full diff, and listed in 05_SKIPPED_UNSAFE_FILES.txt without file content.
+  Excluded paths include .env, project.private.config.json, private keys/certs, node_modules, miniprogram_npm,
+  dist, build, coverage, review-packages, .git, and WeChat DevTools local cache folders.
+
+Examples:
+  node scripts/create-review-package.js --version v0.3.6 --theme order-card-layout-fix \\
+    --goal "Fix order card status overlap" --test-command "node --check scripts/create-review-package.js"
+
+  npm run review:pack -- --version v0.3.6 --theme order-card-layout-fix --context miniprogram/utils/format.js
+`);
+}
 
 function parseArgs(argv) {
   const args = {};
@@ -27,8 +89,18 @@ function parseArgs(argv) {
 
     const eqIndex = raw.indexOf("=");
     const key = raw.slice(2, eqIndex === -1 ? undefined : eqIndex);
-    const value = eqIndex === -1 ? argv[i + 1] : raw.slice(eqIndex + 1);
-    if (eqIndex === -1) i += 1;
+    if (BOOLEAN_ARGS.has(key)) {
+      args[key] = true;
+      continue;
+    }
+
+    let value = "";
+    if (eqIndex !== -1) {
+      value = raw.slice(eqIndex + 1);
+    } else if (i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
+      value = argv[i + 1];
+      i += 1;
+    }
 
     if (LIST_ARGS.has(key)) {
       args[key] = args[key] || [];
@@ -42,7 +114,7 @@ function parseArgs(argv) {
 
 function run(command, args, options = {}) {
   const result = cp.spawnSync(command, args, {
-    cwd: ROOT,
+    cwd: options.cwd || ROOT,
     encoding: "utf8",
     windowsHide: true,
     shell: false,
@@ -57,10 +129,30 @@ function run(command, args, options = {}) {
   };
 }
 
-function git(args, fallback = "") {
-  const result = run("git", args);
+function runShell(command, options = {}) {
+  const result = cp.spawnSync(command, {
+    cwd: options.cwd || ROOT,
+    encoding: "utf8",
+    windowsHide: true,
+    shell: true,
+  });
+  return {
+    command,
+    status: typeof result.status === "number" ? result.status : 1,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    error: result.error,
+  };
+}
+
+function git(args, fallback = "", cwd = ROOT) {
+  const result = run("git", args, { cwd });
   if (result.status !== 0) return fallback;
   return result.stdout.trimEnd();
+}
+
+function gitRaw(args, cwd = ROOT) {
+  return run("git", args, { cwd });
 }
 
 function commandCapture(label, command, args) {
@@ -77,26 +169,64 @@ function isGitRepo() {
   return git(["rev-parse", "--is-inside-work-tree"]) === "true";
 }
 
+function isValidCommit(rev) {
+  if (!rev) return false;
+  const result = gitRaw(["rev-parse", "--verify", `${rev}^{commit}`]);
+  return result.status === 0;
+}
+
+function resolveCommit(rev) {
+  if (!isValidCommit(rev)) return "";
+  return git(["rev-parse", rev], "");
+}
+
+function resolveBaseCommit(args) {
+  if (args.base && isValidCommit(args.base)) {
+    return {
+      baseCommit: resolveCommit(args.base),
+      source: "--base",
+      fallbackSingleCommit: false,
+    };
+  }
+
+  const mergeBase = git(["merge-base", "HEAD", "origin/dev"], "");
+  if (mergeBase && isValidCommit(mergeBase) && mergeBase !== resolveCommit("HEAD")) {
+    return {
+      baseCommit: resolveCommit(mergeBase),
+      source: "merge-base HEAD origin/dev",
+      fallbackSingleCommit: false,
+    };
+  }
+
+  if (isValidCommit("HEAD~1")) {
+    return {
+      baseCommit: resolveCommit("HEAD~1"),
+      source: "HEAD~1",
+      fallbackSingleCommit: false,
+    };
+  }
+
+  return {
+    baseCommit: "",
+    source: "single HEAD fallback",
+    fallbackSingleCommit: true,
+  };
+}
+
 function pad(value) {
   return String(value).padStart(2, "0");
 }
 
 function timestamp(date = new Date()) {
-  const y = date.getFullYear();
-  const m = pad(date.getMonth() + 1);
-  const d = pad(date.getDate());
-  const hh = pad(date.getHours());
-  const mm = pad(date.getMinutes());
-  return `${y}${m}${d}_${hh}${mm}`;
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(
+    date.getMinutes()
+  )}`;
 }
 
 function displayDate(date = new Date()) {
-  const y = date.getFullYear();
-  const m = pad(date.getMonth() + 1);
-  const d = pad(date.getDate());
-  const hh = pad(date.getHours());
-  const mm = pad(date.getMinutes());
-  return `${y}-${m}-${d} ${hh}:${mm}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(
+    date.getMinutes()
+  )}`;
 }
 
 function sanitizeSegment(value, fallback) {
@@ -138,14 +268,22 @@ function writeText(filePath, content) {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
+function appendText(filePath, content) {
+  fs.appendFileSync(filePath, content, "utf8");
+}
+
 function normalizeRel(file) {
   return String(file || "").replace(/\\/g, "/").replace(/^\.?\//, "");
 }
 
-function isUnsafePath(relPath) {
+function unsafeReason(relPath) {
   const rel = normalizeRel(relPath);
-  if (!rel || rel.startsWith("../") || path.isAbsolute(rel)) return true;
-  const parts = rel.split("/");
+  if (!rel) return "empty path";
+  if (path.isAbsolute(rel) || rel.startsWith("../") || rel.includes("/../")) return "path escapes project root";
+
+  const lower = rel.toLowerCase();
+  const parts = lower.split("/");
+  const basename = path.basename(lower);
   const blockedDirs = new Set([
     ".git",
     "node_modules",
@@ -158,20 +296,46 @@ function isUnsafePath(relPath) {
     ".wechat-temp",
     ".wechat-userprofile",
   ]);
-  if (parts.some((part) => blockedDirs.has(part))) return true;
-  if (/^\.env($|\.)/.test(path.basename(rel))) return true;
-  if (/project\.private\.config\.json$/i.test(rel)) return true;
-  if (/\.(pem|key|p12|pfx|crt|cer)$/i.test(rel)) return true;
-  return false;
+
+  if (parts.some((part) => blockedDirs.has(part))) return "blocked directory";
+  if (basename === ".env" || basename.startsWith(".env.")) return "environment file";
+  if (basename === "project.private.config.json") return "WeChat private project config";
+  if (/\.(pem|key|p12|pfx|crt|cer)$/i.test(basename)) return "private key or certificate";
+  return "";
 }
 
-function copyPreservingPath(relPath, targetRoot) {
+function isUnsafePath(relPath) {
+  return Boolean(unsafeReason(relPath));
+}
+
+function fileCopyIssue(relPath, maxBytes) {
   const rel = normalizeRel(relPath);
-  if (isUnsafePath(rel)) return false;
+  const reason = unsafeReason(rel);
+  if (reason) return { type: "unsafe", reason };
 
   const source = path.join(ROOT, rel);
-  if (!fs.existsSync(source) || !fs.statSync(source).isFile()) return false;
+  if (!fs.existsSync(source)) return { type: "missing", reason: "file does not exist" };
 
+  const stat = fs.lstatSync(source);
+  if (stat.isSymbolicLink()) return { type: "unsafe", reason: "symlink skipped" };
+  if (!stat.isFile()) return { type: "unsafe", reason: "not a regular file" };
+  if (stat.size > maxBytes) return { type: "large", reason: `file size ${stat.size} exceeds ${maxBytes} bytes` };
+  return null;
+}
+
+function copyPreservingPath(relPath, targetRoot, maxBytes, skippedUnsafe, skippedLarge) {
+  const rel = normalizeRel(relPath);
+  const issue = fileCopyIssue(rel, maxBytes);
+  if (issue) {
+    if (issue.type === "large") {
+      skippedLarge.push({ path: rel, reason: issue.reason });
+    } else if (issue.type !== "missing") {
+      skippedUnsafe.push({ path: rel, reason: issue.reason });
+    }
+    return false;
+  }
+
+  const source = path.join(ROOT, rel);
   const target = path.join(targetRoot, rel);
   ensureDir(path.dirname(target));
   fs.copyFileSync(source, target);
@@ -184,34 +348,40 @@ function parsePorcelainZ(output) {
   for (let i = 0; i < parts.length; i += 1) {
     const entry = parts[i];
     if (entry.length < 4) continue;
-    const xy = entry.slice(0, 2);
+    const status = entry.slice(0, 2);
     const file = normalizeRel(entry.slice(3));
-    const isRename = xy.includes("R") || xy.includes("C");
+    const isRename = status.includes("R") || status.includes("C");
     if (isRename && i + 1 < parts.length) {
       const oldFile = normalizeRel(parts[i + 1]);
       i += 1;
-      entries.push({ status: xy, path: file, oldPath: oldFile });
+      entries.push({ status, path: file, oldPath: oldFile, source: "working" });
     } else {
-      entries.push({ status: xy, path: file });
+      entries.push({ status, path: file, source: "working" });
     }
   }
   return entries;
 }
 
-function parseNameStatus(output) {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const parts = line.split(/\t+/);
-      const status = parts[0];
-      if (status.startsWith("R") || status.startsWith("C")) {
-        return { status, oldPath: normalizeRel(parts[1]), path: normalizeRel(parts[2]) };
-      }
-      return { status, path: normalizeRel(parts[1]) };
-    })
-    .filter((entry) => entry.path);
+function parseNameStatusZ(output, source) {
+  const parts = output.split("\0").filter(Boolean);
+  const entries = [];
+  for (let i = 0; i < parts.length; ) {
+    const status = parts[i] || "";
+    i += 1;
+    if (!status) continue;
+
+    if (status.startsWith("R") || status.startsWith("C")) {
+      const oldPath = normalizeRel(parts[i] || "");
+      const newPath = normalizeRel(parts[i + 1] || "");
+      i += 2;
+      if (newPath) entries.push({ status, oldPath, path: newPath, source });
+    } else {
+      const file = normalizeRel(parts[i] || "");
+      i += 1;
+      if (file) entries.push({ status, path: file, source });
+    }
+  }
+  return entries;
 }
 
 function categorizeChanges(entries) {
@@ -235,6 +405,10 @@ function categorizeChanges(entries) {
     }
   });
 
+  result.modified = unique(result.modified);
+  result.added = unique(result.added);
+  result.deleted = unique(result.deleted);
+  result.renamed = unique(result.renamed);
   return result;
 }
 
@@ -242,21 +416,74 @@ function unique(items) {
   return Array.from(new Set(items.filter(Boolean)));
 }
 
-function changedPaths(entries) {
+function entryPaths(entries) {
+  return unique(entries.map((entry) => entry.path));
+}
+
+function splitSafeEntries(entries) {
+  const safe = [];
+  const skipped = [];
+  entries.forEach((entry) => {
+    const reason = unsafeReason(entry.path);
+    if (reason) {
+      skipped.push({ path: entry.path, reason });
+    } else {
+      safe.push(entry);
+    }
+  });
+  return { safe, skipped };
+}
+
+function safePaths(entries) {
   return unique(entries.map((entry) => entry.path).filter((file) => !isUnsafePath(file)));
 }
 
-function looksBinary(buffer) {
-  if (!buffer || !buffer.length) return false;
-  return buffer.includes(0);
+function filterPathsForDiff(paths, maxBytes, skippedUnsafe, skippedLarge) {
+  return paths.filter((file) => {
+    const rel = normalizeRel(file);
+    const reason = unsafeReason(rel);
+    if (reason) {
+      skippedUnsafe.push({ path: rel, reason });
+      return false;
+    }
+
+    const source = path.join(ROOT, rel);
+    if (!fs.existsSync(source)) return true;
+
+    const stat = fs.lstatSync(source);
+    if (stat.isSymbolicLink()) {
+      skippedUnsafe.push({ path: rel, reason: "symlink skipped" });
+      return false;
+    }
+    if (!stat.isFile()) {
+      skippedUnsafe.push({ path: rel, reason: "not a regular file" });
+      return false;
+    }
+    if (stat.size > maxBytes) {
+      skippedLarge.push({ path: rel, reason: `file size ${stat.size} exceeds ${maxBytes} bytes` });
+      return false;
+    }
+    return true;
+  });
 }
 
-function pseudoDiffForUntracked(relPath) {
+function looksBinary(buffer) {
+  return Boolean(buffer && buffer.length && buffer.includes(0));
+}
+
+function pseudoDiffForUntracked(relPath, maxBytes, skippedUnsafe, skippedLarge) {
   const rel = normalizeRel(relPath);
-  if (isUnsafePath(rel)) return "";
+  const issue = fileCopyIssue(rel, maxBytes);
+  if (issue) {
+    if (issue.type === "large") {
+      skippedLarge.push({ path: rel, reason: issue.reason });
+    } else if (issue.type !== "missing") {
+      skippedUnsafe.push({ path: rel, reason: issue.reason });
+    }
+    return "";
+  }
 
   const abs = path.join(ROOT, rel);
-  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return "";
   const buffer = fs.readFileSync(abs);
   if (looksBinary(buffer)) {
     return [
@@ -269,20 +496,68 @@ function pseudoDiffForUntracked(relPath) {
 
   const content = buffer.toString("utf8");
   const lines = content.length ? content.split(/\r?\n/) : [];
-  const addedLines = lines.map((line) => `+${line}`).join("\n");
   return [
     `diff --git a/${rel} b/${rel}`,
     "new file mode 100644",
     "--- /dev/null",
     `+++ b/${rel}`,
     `@@ -0,0 +1,${lines.length} @@`,
-    addedLines,
+    lines.map((line) => `+${line}`).join("\n"),
     "",
   ].join("\n");
 }
 
-function getContextFiles(files) {
-  const context = new Set([
+function getCommittedEntries(baseInfo) {
+  if (!baseInfo.baseCommit) {
+    const result = gitRaw(["diff-tree", "--no-commit-id", "--name-status", "-r", "-z", "HEAD"]);
+    return result.status === 0 ? parseNameStatusZ(result.stdout, "committed") : [];
+  }
+  const result = gitRaw(["diff", "--name-status", "-z", `${baseInfo.baseCommit}..HEAD`]);
+  return result.status === 0 ? parseNameStatusZ(result.stdout, "committed") : [];
+}
+
+function getCommittedDiff(baseInfo, paths) {
+  if (!paths.length) return "(no safe committed changes)";
+  const args = baseInfo.baseCommit
+    ? ["diff", "--patch", "--binary", `${baseInfo.baseCommit}..HEAD`, "--", ...paths]
+    : ["show", "--format=fuller", "--patch", "HEAD", "--", ...paths];
+  const result = gitRaw(args);
+  return result.status === 0 ? result.stdout.trimEnd() || "(no committed diff)" : result.stderr.trimEnd();
+}
+
+function getCommittedDiffStat(baseInfo, paths) {
+  if (!paths.length) return "(no safe committed changes)";
+  const args = baseInfo.baseCommit
+    ? ["diff", "--stat", `${baseInfo.baseCommit}..HEAD`, "--", ...paths]
+    : ["show", "--stat", "--oneline", "HEAD", "--", ...paths];
+  const result = gitRaw(args);
+  return result.status === 0 ? result.stdout.trimEnd() || "(no committed diff stat)" : result.stderr.trimEnd();
+}
+
+function getWorkingDiff(paths) {
+  if (!paths.length) return "(no safe working tree changes)";
+  const result = gitRaw(["diff", "--patch", "--binary", "HEAD", "--", ...paths]);
+  return result.status === 0 ? result.stdout.trimEnd() || "(no working tree diff)" : result.stderr.trimEnd();
+}
+
+function getWorkingDiffStat(paths) {
+  if (!paths.length) return "(no safe working tree changes)";
+  const result = gitRaw(["diff", "--stat", "HEAD", "--", ...paths]);
+  return result.status === 0 ? result.stdout.trimEnd() || "(no working tree diff stat)" : result.stderr.trimEnd();
+}
+
+function getCommitsIncluded(baseInfo) {
+  const args = baseInfo.baseCommit ? ["log", "--oneline", `${baseInfo.baseCommit}..HEAD`] : ["log", "--oneline", "-1", "HEAD"];
+  const result = gitRaw(args);
+  if (result.status !== 0) return [];
+  return result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function getContextFiles(files, manualContextRaw) {
+  const auto = new Set([
     "AGENTS.md",
     "CONTRIBUTING.md",
     ".github/workflows/pr-checks.yml",
@@ -308,7 +583,7 @@ function getContextFiles(files) {
       "miniprogram/pages/home/index.wxss",
       "miniprogram/utils/format.js",
       "miniprogram/utils/constants.js",
-    ].forEach((file) => context.add(file));
+    ].forEach((file) => auto.add(file));
   }
 
   if (hasOrderDetail) {
@@ -317,7 +592,7 @@ function getContextFiles(files) {
       "miniprogram/pages/order-detail/index.wxml",
       "miniprogram/pages/order-detail/index.wxss",
       "miniprogram/utils/format.js",
-    ].forEach((file) => context.add(file));
+    ].forEach((file) => auto.add(file));
   }
 
   if (hasCloud) {
@@ -325,13 +600,14 @@ function getContextFiles(files) {
       "cloudfunctions/quickstartFunctions/package.json",
       "cloudfunctions/quickstartFunctions/index.js",
       "cloudfunctions/quickstartFunctions/lib/domain.js",
-    ].forEach((file) => context.add(file));
+    ].forEach((file) => auto.add(file));
   }
 
-  return Array.from(context).filter((file) => {
-    const abs = path.join(ROOT, file);
-    return !isUnsafePath(file) && fs.existsSync(abs) && fs.statSync(abs).isFile();
-  });
+  const manual = toList(manualContextRaw, []);
+  return {
+    auto: Array.from(auto).map(normalizeRel),
+    manual: manual.map(normalizeRel),
+  };
 }
 
 function changedFilesTree(categorized) {
@@ -352,31 +628,113 @@ function changedFilesTree(categorized) {
   ].join("\n");
 }
 
+function skippedList(items) {
+  if (!items.length) return "无";
+  return unique(items.map((item) => `${item.path}\t${item.reason}`)).join("\n");
+}
+
 function psQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-function zipPackage(packageDir, zipPath) {
+function zipPackage(packageDir, zipPath, packageName) {
+  const errors = [];
   if (fs.existsSync(zipPath)) fs.rmSync(zipPath, { force: true });
-  const command = `Compress-Archive -LiteralPath ${psQuote(packageDir)} -DestinationPath ${psQuote(zipPath)} -Force`;
-  const result = run("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);
-  if (result.status !== 0) {
-    throw new Error(`Compress-Archive failed:\n${result.stdout}\n${result.stderr}`);
+
+  const powershellArgs = (exe) => [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    `Compress-Archive -LiteralPath ${psQuote(packageDir)} -DestinationPath ${psQuote(zipPath)} -Force`,
+  ];
+
+  for (const exe of ["powershell.exe", "pwsh"]) {
+    const result = run(exe, powershellArgs(exe));
+    if (result.status === 0 && fs.existsSync(zipPath)) {
+      return { success: true, method: `${exe} Compress-Archive`, errors };
+    }
+    errors.push(`${exe}: ${result.error ? result.error.message : ""} ${result.stderr || result.stdout}`.trim());
   }
+
+  const zipResult = run("zip", ["-r", zipPath, packageName], { cwd: REVIEW_ROOT });
+  if (zipResult.status === 0 && fs.existsSync(zipPath)) {
+    return { success: true, method: "zip -r", errors };
+  }
+  errors.push(`zip -r: ${zipResult.error ? zipResult.error.message : ""} ${zipResult.stderr || zipResult.stdout}`.trim());
+
+  return { success: false, method: "", errors };
+}
+
+function truncate(value, max = 8000) {
+  const text = String(value || "");
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}\n... truncated ${text.length - max} chars ...`;
+}
+
+function executeTestCommands(commands, logsDir) {
+  const results = [];
+  commands.forEach((command, index) => {
+    const result = runShell(command);
+    const logName = `test-command-${String(index + 1).padStart(2, "0")}.log`;
+    const logPath = path.join(logsDir, logName);
+    writeText(
+      logPath,
+      [`$ ${command}`, `exit ${result.status}`, "", "## stdout", result.stdout || "(empty)", "", "## stderr", result.stderr || "(empty)"].join(
+        "\n"
+      )
+    );
+    results.push({ ...result, logName });
+  });
+  return results;
+}
+
+function copyTestLogFiles(logFiles, logsDir, maxBytes, skippedUnsafe, skippedLarge) {
+  const copied = [];
+  logFiles.forEach((raw) => {
+    const filePath = path.resolve(ROOT, raw);
+    const relForSafety = normalizeRel(path.relative(ROOT, filePath));
+    const basename = path.basename(filePath);
+    const safetyReason = unsafeReason(basename) || (relForSafety.startsWith("../") ? "test log outside project root" : "");
+    if (safetyReason) {
+      skippedUnsafe.push({ path: raw, reason: safetyReason });
+      return;
+    }
+    if (!fs.existsSync(filePath)) return;
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink()) {
+      skippedUnsafe.push({ path: raw, reason: "symlink skipped" });
+      return;
+    }
+    if (!stat.isFile()) return;
+    if (stat.size > maxBytes) {
+      skippedLarge.push({ path: raw, reason: `file size ${stat.size} exceeds ${maxBytes} bytes` });
+      return;
+    }
+    const target = path.join(logsDir, basename);
+    fs.copyFileSync(filePath, target);
+    copied.push(basename);
+  });
+  return copied;
 }
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.help) {
+    printHelp();
+    return;
+  }
+
   const createdAt = new Date();
   const repo = isGitRepo();
   const branch = repo ? git(["branch", "--show-current"], "unknown") : "not-a-git-repo";
   const shortHead = repo ? git(["rev-parse", "--short", "HEAD"], "unknown") : "not-a-git-repo";
-  const baseCommit =
-    args.base ||
-    (repo ? git(["merge-base", "HEAD", "origin/dev"], "") || git(["rev-parse", "--short", "HEAD~1"], "") : "");
+  const fullHead = repo ? git(["rev-parse", "HEAD"], "unknown") : "not-a-git-repo";
+  const baseInfo = repo ? resolveBaseCommit(args) : { baseCommit: "", source: "not-a-git-repo", fallbackSingleCommit: true };
   const statusPorcelain = repo ? git(["status", "--porcelain=v1", "-z"], "") : "";
   const dirty = Boolean(statusPorcelain);
   const statusKind = repo ? (dirty ? "working-tree" : "committed") : "not-a-git-repo";
+  const maxBytes = Number(args["max-file-mb"] || 5) * 1024 * 1024 || DEFAULT_MAX_FILE_BYTES;
 
   const version = sanitizeSegment(args.version || process.env.REVIEW_VERSION || "v0.0.0", "v0.0.0");
   const theme = sanitizeSegment(args.theme || process.env.REVIEW_THEME || branch, "review-package");
@@ -387,19 +745,43 @@ function main() {
   if (fs.existsSync(packageDir)) fs.rmSync(packageDir, { recursive: true, force: true });
   ensureDir(packageDir);
 
-  const entries = repo
-    ? dirty
-      ? parsePorcelainZ(statusPorcelain)
-      : parseNameStatus(git(["show", "--name-status", "--format=", "HEAD"], ""))
-    : [];
-  const categorized = categorizeChanges(entries);
-  const files = changedPaths(entries);
-  const contextFiles = getContextFiles(files);
+  const committedEntries = repo ? getCommittedEntries(baseInfo) : [];
+  const workingEntries = repo && dirty ? parsePorcelainZ(statusPorcelain) : [];
+  const trackedWorkingEntries = workingEntries.filter((entry) => !entry.status.includes("?"));
+  const untrackedEntries = workingEntries.filter((entry) => entry.status.includes("?"));
+
+  const committedSplit = splitSafeEntries(committedEntries);
+  const workingSplit = splitSafeEntries(trackedWorkingEntries);
+  const untrackedSplit = splitSafeEntries(untrackedEntries);
+  const skippedUnsafe = [...committedSplit.skipped, ...workingSplit.skipped, ...untrackedSplit.skipped];
+  const skippedLarge = [];
+
+  const safeCommittedPaths = filterPathsForDiff(safePaths(committedSplit.safe), maxBytes, skippedUnsafe, skippedLarge);
+  const safeWorkingPaths = filterPathsForDiff(safePaths(workingSplit.safe), maxBytes, skippedUnsafe, skippedLarge);
+  const safeUntrackedPaths = filterPathsForDiff(safePaths(untrackedSplit.safe), maxBytes, skippedUnsafe, skippedLarge);
+  const allEntries = [...committedEntries, ...workingEntries];
+  const allSafeEntries = [...committedSplit.safe, ...workingSplit.safe, ...untrackedSplit.safe];
+  const files = unique(entryPaths(allSafeEntries));
+  const categorized = categorizeChanges(allSafeEntries);
+
+  const commitsIncluded = repo ? getCommitsIncluded(baseInfo) : [];
+  const diffMode = !repo
+    ? "not-a-git-repo"
+    : dirty
+      ? "base-plus-working-tree"
+      : baseInfo.fallbackSingleCommit
+        ? "single-commit"
+        : "base-range";
+  const diffRange = !repo
+    ? ""
+    : baseInfo.baseCommit
+      ? `${baseInfo.baseCommit}..HEAD${dirty ? " + HEAD..working-tree" : ""}`
+      : `HEAD${dirty ? " + HEAD..working-tree" : ""}`;
 
   const title = args.title || theme.replace(/-/g, " ");
   const goals = toList(args.goal, [`围绕“${title}”生成可独立审查的版本交付包。`]);
   const rootCause = args["root-cause"] || "当前迭代需要形成可追踪、可复现、可二次 Review 的固定交付产物。";
-  const solution = args.solution || "新增自动化审查包生成脚本，统一收集 Git 信息、diff、变更文件、上下文文件、测试记录、风险与回滚说明，并输出 zip 包。";
+  const solution = args.solution || "使用审查包脚本统一收集 Git 信息、diff、变更文件、上下文文件、测试记录、风险与回滚说明，并输出 zip 包。";
   const alternatives = args.alternatives || "未采用手工整理审查包，因为人工步骤容易遗漏 diff、上下文文件或测试失败信息。";
   const notModified = toList(args["not-modified"], [
     "未修改小程序业务逻辑",
@@ -421,16 +803,58 @@ function main() {
     "包含完整 diff 与变更文件副本",
     "不包含 node_modules、miniprogram_npm、构建产物或敏感配置",
   ]);
-  const tests = toList(args.test, ["未传入测试记录；请在调用脚本时使用 --test 补充。"]);
+  const testNotes = toList(args.test, []);
+  const testCommands = toList(args["test-command"], []);
+  const testLogFiles = toList(args["test-log-file"], []);
   const manualChecks = toList(args["manual-check"], ["未执行页面级手动测试。"]);
   const notTested = toList(args["not-tested"], ["未使用微信开发者工具编译。"]);
   const risks = toList(args.risk, ["脚本是交付工具，不参与小程序运行；主要风险是审查包元数据填写不完整。"]);
+
+  const manualContextRaw = args.context || [];
+  const context = getContextFiles(files, manualContextRaw);
+  const autoContextFiles = context.auto.filter((file) => fs.existsSync(path.join(ROOT, file)));
+  const manualContextFiles = context.manual;
 
   const uiChanged = files.some((file) => /^miniprogram\/.+\.(wxml|wxss)$/.test(file));
   const cloudChanged = files.some((file) => file.startsWith("cloudfunctions/"));
   const businessLogicChanged = files.some((file) =>
     /^miniprogram\/pages\/|^miniprogram\/components\/|^miniprogram\/utils\/|^cloudfunctions\//.test(file)
   );
+
+  const committedDiff = getCommittedDiff(baseInfo, safeCommittedPaths);
+  const workingDiff = dirty ? getWorkingDiff(safeWorkingPaths) : "";
+  const untrackedDiff = dirty
+    ? safeUntrackedPaths.map((file) => pseudoDiffForUntracked(file, maxBytes, skippedUnsafe, skippedLarge)).filter(Boolean).join("\n")
+    : "";
+
+  const fullDiff = dirty
+    ? [
+        "# Committed changes since base",
+        committedDiff,
+        "",
+        "# Working tree changes since HEAD",
+        workingDiff || "(no safe working tree changes)",
+        "",
+        "# Untracked files captured by review package generator",
+        untrackedDiff || "(no safe untracked files)",
+      ].join("\n")
+    : committedDiff;
+
+  const committedDiffStat = getCommittedDiffStat(baseInfo, safeCommittedPaths);
+  const workingDiffStat = dirty ? getWorkingDiffStat(safeWorkingPaths) : "(working tree clean)";
+  const diffStatText = repo
+    ? [
+        "# Committed diff stat",
+        `$ git ${baseInfo.baseCommit ? `diff --stat ${baseInfo.baseCommit}..HEAD` : "show --stat --oneline HEAD"}`,
+        committedDiffStat,
+        "",
+        "# Working tree diff stat",
+        dirty ? "$ git diff --stat HEAD" : "$ git diff --stat HEAD",
+        workingDiffStat,
+      ].join("\n")
+    : "当前目录不是 git 仓库，无法记录 diff stat。";
+
+  const commitsIncludedText = commitsIncluded.length ? commitsIncluded.join("\n") : "(no commits included)";
 
   const gitStatusText = repo
     ? [
@@ -439,31 +863,6 @@ function main() {
         commandCapture("git rev-parse --short HEAD", "git", ["rev-parse", "--short", "HEAD"]),
       ].join("\n\n")
     : "当前目录不是 git 仓库，无法记录 git status。";
-
-  const diffStatText = repo
-    ? [
-        commandCapture("git diff --stat", "git", ["diff", "--stat"]),
-        dirty ? "" : commandCapture("git show --stat --oneline HEAD", "git", ["show", "--stat", "--oneline", "HEAD"]),
-      ]
-        .filter(Boolean)
-        .join("\n\n")
-    : "当前目录不是 git 仓库，无法记录 diff stat。";
-
-  let fullDiff = repo
-    ? dirty
-      ? git(["diff", "--patch", "--binary", "HEAD"], "")
-      : git(["show", "--format=fuller", "--patch", "HEAD"], "")
-    : "当前目录不是 git 仓库，无法生成 diff。";
-
-  if (dirty) {
-    const untracked = entries.filter((entry) => entry.status.includes("?")).map((entry) => entry.path);
-    const pseudo = untracked.map(pseudoDiffForUntracked).filter(Boolean).join("\n");
-    if (pseudo) {
-      fullDiff = [fullDiff, "\n# Untracked files captured by review package generator\n", pseudo]
-        .filter(Boolean)
-        .join("\n");
-    }
-  }
 
   writeText(
     path.join(packageDir, "00_REVIEW_README.md"),
@@ -474,11 +873,16 @@ ${title}
 
 ## 基本信息
 - 本次版本号：${version}
-- 上一版本号或基准 commit：${baseCommit || "未指定"}
+- 上一版本号或基准 commit：${baseInfo.baseCommit || "未指定，已退化为 HEAD 单提交模式"}
+- 基准来源：${baseInfo.source}
 - 当前 commit hash：${shortHead}${dirty ? "（未提交工作区）" : ""}
 - 分支名：${branch}
 - 创建时间：${displayDate(createdAt)}
 - 工作区状态：${statusKind}
+- diff mode：${diffMode}
+- diff range：${diffRange || "无"}
+
+${baseInfo.fallbackSingleCommit ? "> 注意：未找到可用 baseCommit，本次审查包已退化为 HEAD 单提交模式。\n" : ""}
 
 ## 迭代目标
 ${mdList(goals)}
@@ -559,21 +963,89 @@ ${mdList(risks)}
 
   writeText(path.join(packageDir, "03_GIT_STATUS.txt"), `${gitStatusText}\n`);
   writeText(path.join(packageDir, "04_DIFF_STAT.txt"), `${diffStatText}\n`);
+  writeText(path.join(packageDir, "04_COMMITS_INCLUDED.txt"), `${commitsIncludedText}\n`);
   writeText(path.join(packageDir, "05_FULL_DIFF.patch"), `${fullDiff || "(no diff)"}\n`);
   writeText(path.join(packageDir, "06_CHANGED_FILES_TREE.txt"), changedFilesTree(categorized));
 
   const changedFilesRoot = path.join(packageDir, "07_CHANGED_FILES");
-  const copiedChanged = files.filter((file) => copyPreservingPath(file, changedFilesRoot));
+  ensureDir(changedFilesRoot);
+  const copiedChanged = files.filter((file) => copyPreservingPath(file, changedFilesRoot, maxBytes, skippedUnsafe, skippedLarge));
+  writeText(
+    path.join(changedFilesRoot, "README.md"),
+    copiedChanged.length
+      ? `# Changed Files\n\n已复制 ${copiedChanged.length} 个安全变更文件，保留原始路径结构。\n`
+      : "# Changed Files\n\n本次没有可复制的安全变更文件，或变更文件均为删除/不安全/超大文件。\n"
+  );
 
   const contextRoot = path.join(packageDir, "08_RELATED_CONTEXT_FILES");
-  const copiedContext = contextFiles.filter((file) => copyPreservingPath(file, contextRoot));
+  ensureDir(contextRoot);
+  const skippedContext = [];
+  const copiedAutoContext = [];
+  const copiedManualContext = [];
+
+  autoContextFiles.forEach((file) => {
+    if (copyPreservingPath(file, contextRoot, maxBytes, skippedUnsafe, skippedLarge)) {
+      copiedAutoContext.push(file);
+    } else {
+      skippedContext.push(file);
+    }
+  });
+
+  manualContextFiles.forEach((file) => {
+    if (copyPreservingPath(file, contextRoot, maxBytes, skippedUnsafe, skippedLarge)) {
+      copiedManualContext.push(file);
+    } else {
+      skippedContext.push(file);
+    }
+  });
+
+  const copiedContext = unique([...copiedAutoContext, ...copiedManualContext]);
+  writeText(
+    path.join(contextRoot, "README.md"),
+    copiedContext.length
+      ? `# Related Context Files\n\n已复制 ${copiedContext.length} 个上下文文件。\n`
+      : "# Related Context Files\n\n本次没有可复制的上下文文件，或上下文文件不存在/不安全/超大。\n"
+  );
+
+  const logsDir = path.join(packageDir, "09_TEST_LOGS");
+  ensureDir(logsDir);
+  const executedTests = executeTestCommands(testCommands, logsDir);
+  const copiedTestLogs = copyTestLogFiles(testLogFiles, logsDir, maxBytes, skippedUnsafe, skippedLarge);
 
   writeText(
     path.join(packageDir, "09_TEST_REPORT.md"),
     `# Test Report
 
 ## Automated Checks
-${tests.map((item) => `### ${item}\n结果：见命令描述\n`).join("\n")}
+
+### Free-form Notes
+${mdList(testNotes, "未传入 free-form test note")}
+
+### Executed Commands
+${
+  executedTests.length
+    ? executedTests
+        .map(
+          (item) => `#### ${item.command}
+- exit code: ${item.status}
+- log: 09_TEST_LOGS/${item.logName}
+
+stdout:
+\`\`\`text
+${truncate(item.stdout || "(empty)")}
+\`\`\`
+
+stderr:
+\`\`\`text
+${truncate(item.stderr || "(empty)")}
+\`\`\``
+        )
+        .join("\n\n")
+    : "未通过 --test-command 执行命令。"
+}
+
+### Copied Test Logs
+${mdList(copiedTestLogs)}
 
 ## Manual Checks
 ${mdList(manualChecks)}
@@ -644,8 +1116,9 @@ ${uiChanged ? "- 住户端订单页\n- 家洁师端接单首页\n- 家洁师端�
 `
   );
 
+  const riskFile = path.join(packageDir, "12_RISK_AND_ROLLBACK.md");
   writeText(
-    path.join(packageDir, "12_RISK_AND_ROLLBACK.md"),
+    riskFile,
     `# Risk and Rollback
 
 ## Main Risks
@@ -669,6 +1142,9 @@ ${businessLogicChanged ? "存在运行时代码变更，请按验收标准验证
 ## Rollback Plan
 回退以下文件：
 ${mdList(files)}
+
+## Zip Generation
+如果 zip 文件存在，说明压缩阶段已完成；如果压缩失败，脚本会在此文件追加失败原因并返回非 0，同时保留审查包目录。
 `
   );
 
@@ -696,8 +1172,9 @@ ${checkboxList(acceptance)}
 `
   );
 
+  const notesFile = path.join(packageDir, "15_CODEX_NOTES.md");
   writeText(
-    path.join(packageDir, "15_CODEX_NOTES.md"),
+    notesFile,
     `# Codex Notes
 
 ## 最不确定的地方
@@ -713,7 +1190,9 @@ ${mdList(risks)}
 ${mdList(notTested)}
 
 ## 临时方案或技术债
-${args.debt || "审查包脚本使用 PowerShell Compress-Archive 生成 zip，当前面向 Windows/Codex Desktop 环境；如迁移到 Linux CI，可改为跨平台 zip 实现。"}
+${args.debt || "审查包脚本优先使用 PowerShell Compress-Archive 生成 zip，并提供 pwsh 与 zip -r fallback；如三者均不可用，会保留目录并明确失败原因。"}
+
+${baseInfo.fallbackSingleCommit ? "## Diff Fallback\n未找到可用 baseCommit，本次审查包退化为 HEAD 单提交模式。\n" : ""}
 `
   );
 
@@ -724,11 +1203,22 @@ ${args.debt || "审查包脚本使用 PowerShell Compress-Archive 生成 zip，�
     created_at: displayDate(createdAt),
     branch,
     commit: shortHead,
-    base_commit: baseCommit || "",
+    commit_full: fullHead,
+    base_commit: baseInfo.baseCommit || "",
+    base_source: baseInfo.source,
     status: statusKind,
+    diff_mode: diffMode,
+    diff_range: diffRange,
+    commits_included: commitsIncluded,
     changed_files: files,
+    safe_changed_files: files,
+    skipped_unsafe_files: skippedUnsafe,
+    skipped_large_files: skippedLarge,
     copied_changed_files: copiedChanged,
-    related_context_files: copiedContext,
+    auto_related_context_files: autoContextFiles,
+    manual_related_context_files: manualContextFiles,
+    copied_related_context_files: copiedContext,
+    skipped_related_context_files: unique(skippedContext),
     business_logic_changed: businessLogicChanged,
     cloud_functions_changed: cloudChanged,
     database_schema_changed: false,
@@ -751,20 +1241,38 @@ ${args.debt || "审查包脚本使用 PowerShell Compress-Archive 生成 zip，�
 - 未打包 miniprogram_npm。
 - 未打包 dist/build/coverage 输出目录。
 - 未打包 review-packages 历史包。
+- 05_FULL_DIFF.patch 也经过敏感路径过滤，只包含 safe changed files。
+- 被跳过的不安全路径只记录在 05_SKIPPED_UNSAFE_FILES.txt 中，不记录文件内容。
 
 ## Included Files Review
 - 变更文件副本数量：${copiedChanged.length}
 - 上下文文件副本数量：${copiedContext.length}
+- 跳过不安全文件数量：${skippedUnsafe.length}
+- 跳过超大文件数量：${skippedLarge.length}
 
 ## Notes
 如后续某次迭代必须包含可能敏感的配置文件，应先脱敏再放入审查包。
 `
   );
 
-  zipPackage(packageDir, zipPath);
+  writeText(path.join(packageDir, "05_SKIPPED_UNSAFE_FILES.txt"), `${skippedList(skippedUnsafe)}\n`);
+  writeText(path.join(packageDir, "05_SKIPPED_LARGE_FILES.txt"), `${skippedList(skippedLarge)}\n`);
+
+  const zipResult = zipPackage(packageDir, zipPath, packageName);
+  if (!zipResult.success) {
+    const reason = zipResult.errors.join("\n");
+    appendText(riskFile, `\n## Zip Generation Failure\nzip 未生成。原因：\n\`\`\`text\n${reason}\n\`\`\`\n`);
+    appendText(notesFile, `\n## Zip Generation Failure\nzip 未生成。原因：\n\`\`\`text\n${reason}\n\`\`\`\n`);
+    console.log(`REVIEW_PACKAGE_DIR=${packageDir}`);
+    console.log(`REVIEW_PACKAGE_ZIP_FAILED=${zipPath}`);
+    console.error(reason);
+    process.exitCode = 1;
+    return;
+  }
 
   console.log(`REVIEW_PACKAGE_DIR=${packageDir}`);
   console.log(`REVIEW_PACKAGE_ZIP=${zipPath}`);
+  console.log(`REVIEW_PACKAGE_ZIP_METHOD=${zipResult.method}`);
 }
 
 main();
