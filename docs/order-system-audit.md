@@ -8,7 +8,7 @@
 
 - `miniprogram/pages/order-create/index.js`：用户发布需求、填写服务信息、地址快照、联系方式、实时价格预估并调用 `createOrder`。
 - `miniprogram/pages/order-create/index.wxml` / `index.wxss`：发布需求页表单和价格预估展示。
-- `miniprogram/pages/order-list/index.js`：用户端/家洁师端共用订单列表、Tab 统计、操作按钮、删除/归档、模拟支付、进入会话。
+- `miniprogram/pages/order-list/index.js`：用户端/家洁师端共用订单列表、Tab 统计、操作按钮、删除/归档、进入会话。
 - `miniprogram/pages/order-list/index.wxml` / `index.wxss`：订单 Tab 和共享 `order-card` 列表。
 - `miniprogram/pages/order-detail/index.js`：订单详情、响应/接单、付款、开始服务、提交完成、验收评价、评价修改、上传评价照片、完成照片、电话/会话/收藏。
 - `miniprogram/pages/order-detail/index.wxml` / `index.wxss`：订单详情页状态、联系人、价格、评价、完成照片和底部操作。
@@ -51,8 +51,8 @@
 | `waiting_confirm` | 已有家洁师响应，等待用户选择家洁师。 | `acceptOrder`、`selectOrderResponse`、用户详情响应列表 |
 | `assigned_waiting_accept` | 用户指派家洁师，等待该家洁师接受。 | `createOrder`、`listAssignedOrders`、详情页、Tab 统计 |
 | `assigned_declined` | 指派家洁师拒绝，用户可改为公开或重新指派。 | `declineAssignedOrder`、`updateOrderPublishMode`、用户详情 |
-| `waiting_payment` | 用户已选择/家洁师已接受，等待用户支付到平台托管。 | `acceptOrder` 指派链路、`selectOrderResponse`、`mockPayOrder`、列表/详情操作 |
-| `confirmed` | 用户已支付，平台托管中，等待上门服务。 | `mockPayOrder`、`updateOrderStatus` 开始服务、详情/列表 |
+| `waiting_payment` | 用户已选择/家洁师已接受，但真实支付能力待接入；当前订单需平台确认后才能进入履约。 | `acceptOrder` 指派链路、`selectOrderResponse`、列表/详情展示 |
+| `confirmed` | 订单已确认，等待上门服务；生产环境不能由模拟支付推进。 | `updateOrderStatus` 开始服务、详情/列表 |
 | `accepted` | 旧状态别名，前端和领域层归一为 `confirmed`，部分操作判断仍兼容。 | `format.js`、`domain.js`、订单列表/详情 |
 | `in_service` | 家洁师已开始服务。 | `updateOrderStatus`、订单列表/详情 |
 | `waiting_complete` | 家洁师已提交完成，等待用户验收。 | `updateOrderStatus`、自动验收、订单列表/详情 |
@@ -65,9 +65,9 @@
 支付状态枚举：
 
 - `unpaid`：未支付或待用户确认阶段。
-- `pending_pay`：待支付。
-- `escrowed`：已支付到平台托管。
-- `settled`：已结算。
+- `pending_pay`：待平台确认；真实支付能力待接入时不能展示为可支付。
+- `escrowed`：历史兼容字段，用户可见文案应表达为已确认或试运营确认，不得承诺真实资金链路。
+- `settled`：历史兼容字段，用户可见文案应表达为已完成或平台确认完成，不得承诺真实结算。
 - `refunded`：已退款。
 
 ## 3. 当前订单流转路径
@@ -77,8 +77,8 @@
 1. 用户在 `order-create` 发布公开需求，云函数 `createOrder` 写入 `publishMode = "public"`、`status = "waiting_response"`、`paymentStatus = "unpaid"`。
 2. 家洁师在首页“附近订单/全部订单”看到公开订单，点击响应，云函数 `acceptOrder` 将订单推进到 `waiting_confirm`，并在 `responses` 中追加该家洁师响应记录。
 3. 用户在订单详情的响应列表中选择家洁师，`selectOrderResponse` 将订单推进到 `waiting_payment`、`paymentStatus = "pending_pay"`，并写入 `acceptedCleanerOpenid`。
-4. 用户点击模拟支付，`mockPayOrder` 将订单推进到 `confirmed`、`paymentStatus = "escrowed"`，并创建/确保会话。
-5. 家洁师在订单详情或列表点击开始服务，`updateOrderStatus(in_service)` 校验已托管后推进到 `in_service`。
+4. v0.2.1-r2 不接入真实微信支付，前端不展示支付按钮；`mockPayOrder` 仅允许显式非生产环境测试使用，production 直接拒绝。
+5. 家洁师在订单详情或列表点击开始服务，`updateOrderStatus(in_service)` 仍兼容历史 `paymentStatus = "escrowed"` 订单；真实支付未接入前，生产页面应提示试运营流程待平台确认。
 6. 家洁师提交完成，`updateOrderStatus(waiting_acceptance)` 在云端归一为 `waiting_complete`，保存 `completionPhotoUrls` / `completionPhotos`，等待用户验收。
 7. 用户验收并评价，`updateOrderStatus(completed)` 调用 `completeOrderWithReview`，写入 `completed`、`paymentStatus = "settled"`、`settledAt`，创建手动评价并刷新家洁师统计。
 8. 如果用户超时未验收，`autoAcceptOverdueOrdersInternal` 将 `waiting_complete` 推进到 `auto_completed`、`paymentStatus = "settled"`，不创建手动评价。
@@ -116,7 +116,7 @@
 
 - `getOrderDetail` 返回订单、家洁师资料、客户资料、评价信息、是否收藏、是否可编辑评价。
 - 用户可在 `waiting_confirm` 选择响应家洁师。
-- 用户可在 `waiting_payment` 模拟支付。
+- 用户在 `waiting_payment` 只能查看订单详情或提交客服工单，不能在生产页面触发模拟支付。
 - 用户可在 `waiting_complete` / `waiting_acceptance` 验收并强制评分。
 - 已评价且 24 小时内、未修改过时可修改一次评价。
 - 用户评价照片保存在 `reviews.imageUrls`，家洁师完成照片保存在订单 `completionPhotoUrls` / `completionPhotos`。

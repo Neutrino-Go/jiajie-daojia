@@ -18,7 +18,14 @@
     "pages/cleaner-list/index",
     "pages/cleaner-detail/index",
     "pages/saved-cleaners/index",
-    "pages/profile/index"
+    "pages/profile/index",
+    "pages/support/index",
+    "pages/legal/user-agreement/index",
+    "pages/legal/privacy-policy/index",
+    "pages/legal/platform-rules/index",
+    "pages/legal/service-guarantee/index",
+    "pages/legal/refund-cancellation/index",
+    "pages/legal/account-deletion/index"
   ],
   "window": {
     "backgroundColor": "#F7F8FA",

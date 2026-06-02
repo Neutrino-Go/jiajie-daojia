@@ -2,19 +2,18 @@
 
 | 风险编号 | 风险描述 | 影响页面/云函数 | 严重级别 | 发生概率 | 解决方案 | 是否上线阻塞 | Owner | 验收方式 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| R-001 | production 继续使用 mockPayOrder | order-detail, order-list, quickstartFunctions | P0 | 高 | production 禁用 mockProvider；接入微信支付或标记线下试运营 | 是 | 技术 | production 环境调用 mockPayOrder 返回拒绝 |
-| R-002 | 无退款流程但展示支付托管/已结算 | order-detail, income-stats, quickstartFunctions | P0 | 高 | 建立 refundRequests、退款 provider、结算冻结 | 是 | 技术/运营 | 退款申请、审批、回调、订单状态一致 |
-| R-003 | 服务失败后无售后入口 | order-detail, profile | P0 | 高 | 建立售后工单和客服入口 | 是 | 产品 | 用户可从订单详情提交售后 |
-| R-004 | 无真实保险字段却误展示保障承诺 | cleaner-detail, order-detail | P0 | 中 | 禁止未证实保险文案；补保险字段 | 是 | 产品/法务 | 无保单时不显示已投保 |
-| R-005 | 阿姨准入字段不足 | cleaner-detail, listOpenOrders, acceptOrder | P1 | 高 | 新增实名、健康证、培训、服务证、保险状态 | 否 | 运营 | 未审核/过期状态不可接单 |
-| R-006 | 优惠券压低阿姨收入 | order-create, pricing, income-stats | P1 | 中 | 引入 platformSubsidy 和 cleanerBaseIncome | 否 | 产品/财务 | 使用优惠后 cleanerIncome 不下降 |
-| R-007 | 开荒保洁按小时导致亏损或服务争议 | order-create, pricing | P1 | 中 | 开荒改按面积和难度加价 | 否 | 产品 | 60㎡起步、特殊项需确认 |
-| R-008 | 多人响应和选择并发导致状态错乱 | selectOrderResponse, acceptOrder | P1 | 中 | 状态乐观锁、幂等键、重复点击保护 | 否 | 技术 | 并发选择只成功一次 |
-| R-009 | 自动验收后立即结算，售后争议难处理 | autoAcceptOverdueOrdersInternal | P1 | 中 | 自动验收后设置售后期和结算冻结 | 否 | 技术 | auto_completed 后售后期可见 |
-| R-010 | 客服/优惠券/反馈仍显示暂未开放 | profile | P1 | 高 | 真实入口或隐藏未开放功能 | 否 | 产品 | 页面无无效入口 |
-| R-011 | 证件材料被普通用户看到 | cleaner-detail, cloudfunctions | P0 | 中 | 证件只给 admin，用户只看状态 | 是 | 技术/法务 | 普通用户接口无 fileID 原件 |
-| R-012 | requiredPrivateInfos 与实际权限不一致 | app.json, location-select, chat/order images | P1 | 中 | 隐私指引补齐位置、相册、相机、录音、云存储用途 | 否 | 产品 | 小程序隐私检查通过 |
-| R-013 | seed/mock 数据进入生产 | initCollections, listCleaner | P1 | 中 | APP_ENV 隔离，production 禁 seed | 否 | 技术 | production seed 接口拒绝 |
-| R-014 | 订单价格配置散落前后端 | config/pricing, lib/pricing | P2 | 高 | 价格规则服务端化，前端只展示 quote | 否 | 技术 | 前端篡改金额不影响订单 |
-| R-015 | 缺少 auditLogs，资金和状态问题难追溯 | quickstartFunctions | P1 | 中 | 关键操作写 auditLogs | 否 | 技术 | 支付、退款、状态变更有日志 |
-
+| R-001 | 普通用户可调用 `initCollections`、migrations、`autoAcceptOverdueOrders` | quickstartFunctions | P0 | 高 | 所有管理动作必须 `requireAdmin`，production migration 要 explicit confirm | 是 | 技术 | 普通用户调用返回 `FORBIDDEN` |
+| R-002 | production seed/mock 缺少硬开关，环境变量缺失时 fail-open | quickstartFunctions | P0 | 高 | `isProduction()` fail-closed，只有显式 dev/test/local 才允许 mock/seed | 是 | 技术 | APP_ENV 缺失时 `mockPayOrder` 返回拒绝 |
+| R-003 | `customerProfile` 可能被非本人查询 | getCustomerProfile | P0 | 高 | 普通用户只能读自己；查询他人必须 admin | 是 | 技术/隐私 | 普通用户查询他人返回 `FORBIDDEN` |
+| R-004 | `getOrderDetail` 可能通过 customerProfile 泄露联系方式 | getOrderDetail | P0 | 高 | customerProfile 按 owner/fulfillment/public 三类白名单返回 | 是 | 技术/隐私 | 未选中家洁师看不到手机号、微信、详细地址、`_openid` |
+| R-005 | `publicCleaner` 直接 spread 导致家洁师电话、微信、位置、证件 fileID、保单号泄露 | listCleaners, getCleanerDetail, orderDetail | P0 | 高 | `publicCleanerProfile` 白名单；履约联系方式也只返回必要字段 | 是 | 技术/隐私 | 公开接口无 phone、wechat、lastLocation、fileID、policyNo、riskLevel |
+| R-006 | 普通读接口间接触发自动验收，导致订单状态和结算字段变化 | listMyOrders, getOrderDetail, getIncomeStats | P0 | 高 | 从读接口移除 `autoAcceptOverdueOrdersInternal`；仅 admin/system 触发 | 是 | 技术 | 普通读接口不修改 waiting_complete 订单 |
+| R-007 | 缺少 `auditLogs`，关键状态和管理动作不可追踪 | quickstartFunctions | P0 | 中 | 最小 audit log，敏感字段脱敏摘要 | 是 | 技术 | updateOrderStatus/hide/updateAvailability 等写日志且无敏感原文 |
+| R-008 | 支付链路未接入真实能力但前端展示支付/托管承诺 | order-detail, order-list, format/constants | P0 | 高 | 前端不展示支付按钮，不调用 mock，文案改为支付能力待接入/待平台确认 | 是 | 产品/技术 | 小程序静态扫描无托管类误导文案和 `mockPayOrder` |
+| R-009 | support ticket 可用他人 orderId 提交，造成订单枚举或敏感信息联想 | createSupportTicket | P0 | 中 | 带 orderId 时校验订单参与人或 admin；仅 orderNo 不读取订单 | 是 | 技术/隐私 | 非订单参与人提交返回 `FORBIDDEN` |
+| R-010 | 缺少合规页面和入口 | app.json, profile, order-create | P0 | 高 | 注册协议、隐私、交易规则、保障、退款取消、删除注销页面 | 是 | 产品/法务 | app.json 页面路径合法，profile/下单页可进入 |
+| R-011 | 保险和保障文案在无真实字段时过度承诺 | legal, cleaner/order pages | P0 | 中 | 禁止“已投保”“百万保障”“全额赔付”；统一写实际合同和平台规则为准 | 是 | 产品/法务 | 静态扫描无禁用词 |
+| R-012 | CloudBase 数据库规则和部署权限未复核 | CloudBase config/rules | P0 | 中 | 上线前人工复核 database rules、云函数触发器、环境变量和部署权限 | 是 | 技术/运维 | 留存复核记录 |
+| R-013 | 优惠券或拉新价压低家洁师收入 | order-create, pricing | P1 | 中 | 引入 `platformFundedDiscount`、`platformSubsidyBudget`、`cashBurn` | 否 | 产品/财务 | 使用优惠后 cleanerIncome 不下降 |
+| R-014 | 开荒保洁按小时导致亏损或服务争议 | order-create, pricing | P1 | 中 | 开荒按面积和难度加价 | 否 | 产品 | 60 平方米起步，特殊项需确认 |
+| R-015 | 多人响应和选择并发导致状态错乱 | selectOrderResponse, acceptOrder | P1 | 中 | 状态乐观锁、幂等键、重复点击保护 | 否 | 技术 | 并发选择只成功一次 |

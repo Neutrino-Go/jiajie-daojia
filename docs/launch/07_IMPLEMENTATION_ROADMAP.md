@@ -1,90 +1,99 @@
 # 实施路线图
 
-## v0.2.1_order-protection-and-after-sales
+## v0.2.1-r2_prelaunch-security-privacy-production-gates-fix
 
-目标：补齐每单保障、服务标准和售后入口。
+目标：修复正式上线前 P0 安全、隐私、生产开关和审查包问题。
 
 范围：
 
-- 新增 `serviceStandards`
-- 新增 `protectionPlans`
-- 创建订单写入 `protectionSnapshot`
-- 创建订单写入 `serviceStandardSnapshot`
-- 新增售后/投诉/返工/退款工单
-- 订单详情展示保障卡
-- 订单详情展示售后入口
-- 家洁师端异常报备
-- 客服入口不再是“暂未开放”
+- 云函数 admin gate、production fail-closed、seed/mock/migration/autoAccept 硬开关。
+- customerProfile、cleanerProfile、orderDetail、openOrders 的最小脱敏。
+- `auditLogs` 最小实现，覆盖关键状态变更、自动验收、迁移、隐藏订单和可接单开关。
+- support ticket 最小闭环，校验 orderId 归属。
+- 合规页面最小壳和 profile/order-create/order-detail 入口。
+- 前端移除模拟支付入口和托管类承诺文案。
+- 恢复通用 review package 工具链。
 
 验收：
 
-- 每个新订单都有保障快照。
-- 用户能在订单详情发起售后工单。
-- 家洁师能在订单详情提交异常报备。
-- 不触发真实退款，仅创建工单。
+- production 或环境变量缺失时 `mockPayOrder` 拒绝。
+- 普通用户不能调用 `initCollections`、migrations、`autoAcceptOverdueOrders`。
+- 普通读接口不会触发自动验收写操作。
+- 未选中家洁师不能看到客户手机号、微信号、详细地址、`_openid`。
+- 公开家洁师资料不返回电话、微信、坐标、证件 fileID、保单号和内部风险字段。
+- 小程序端不存在 mock 支付调用、托管承诺、未开放入口文案。
 
-## v0.2.2_pricing-engine-and-city-price-rules
+## v0.2.2_order-protection-and-after-sales
 
-目标：建立服务端统一报价和账务字段。
+目标：补齐服务标准、争议处理、售后和退款工单规则。
 
 范围：
 
-- 新增 `pricingRules`
-- 新增 `pricingQuotes`
-- 前端请求 quote 后下单
-- 下单使用 `quoteId`
-- 动态 `platformFeeRate`
-- 记录 `platformSubsidy`
-- 记录 `couponDiscount`
-- `cleanerIncome` 不被优惠券压低
-- 前后端 pricing 去重
+- 新增 `serviceStandards`、`protectionPlans`。
+- 创建订单写入 `protectionSnapshot`、`serviceStandardSnapshot`。
+- 新增售后/投诉/返工/退款工单类型和处理流转。
+- 订单详情展示服务标准和售后入口。
+- 家洁师端异常报备。
+- 自动验收后设置售后期。
+
+验收：
+
+- 每个新订单都有服务标准快照。
+- 用户能从订单详情提交售后工单。
+- 家洁师能在订单详情提交异常报备。
+- 不触发真实退款，仅创建工单和审计记录。
+
+## v0.2.3_pricing-engine-and-subsidy-accounting
+
+目标：建立服务端报价、补贴预算和财务字段。
+
+范围：
+
+- 新增 `pricingRules`、`pricingQuotes`。
+- 前端请求 quote 后下单，下单使用 `quoteId`。
+- 动态 `platformFeeRate`。
+- 记录 `couponDiscount`、`platformFundedDiscount`、`platformSubsidyBudget`、`cashGrossMargin`、`cashBurn`。
+- `cleanerIncome` 不被优惠券或拉新补贴压低。
+- 前后端 pricing 去重。
 
 验收：
 
 - 上海价格高于哈尔滨。
-- 开荒保洁按面积报价。
-- 用户优惠不降低阿姨收入。
-- 订单保存 `priceRuleVersion` 和 `quoteId`。
+- 开荒保洁按面积和难度报价。
+- 用户优惠不降低家洁师收入。
+- 订单保存 `priceRuleVersion`、`quoteId` 和补贴快照。
 
-## v0.2.3_cleaner-verification-and-launch-hardening
+## v0.2.4_cleaner-verification-and-launch-hardening
 
-目标：补齐阿姨准入和 production 风险开关。
+目标：补齐家洁师准入和生产部署加固。
 
 范围：
 
-- 新增 `cleanerVerifications`
-- 扩展 `cleanerProfiles`
-- 实名认证状态
-- 手机认证状态
-- 健康证状态
-- 培训状态
-- 服务证状态
-- 保险状态
-- cleaner-detail 展示可信状态
-- production 禁用 seed/mock
-- 隐私/协议/平台规则页面
-- 假数据清理
-- 云函数权限和并发审计
+- 新增 `cleanerVerifications`。
+- 扩展 `cleanerProfiles`。
+- 实名、手机、健康证、培训、服务证状态。
+- cleaner-detail 仅展示可信状态，不展示证件原件。
+- CloudBase 数据库规则、云函数部署权限、环境变量复核。
+- 假数据清理和 production launch checklist。
 
 验收：
 
 - 未通过平台审核的家洁师不能接单。
-- 用户看到的审核状态不泄漏证件原件。
-- production 下 seed/mock 被阻断。
+- 普通用户接口无证件 fileID 原文。
+- CloudBase 权限和 production 环境变量有人工复核记录。
 
-## v0.2.4_payment-refund-settlement
+## v0.2.5_payment-refund-settlement
 
-目标：接入真实支付、退款、结算。
+目标：接入真实微信支付、退款和结算。
 
 范围：
 
-- 微信支付 provider
-- mockProvider 仅 dev/test
-- 支付回调幂等
-- 退款流程
-- 结算流程
-- 售后中暂停结算
-- 对账和 auditLogs
+- 微信支付 provider。
+- mock provider 仅限 dev/test。
+- 支付回调幂等。
+- 退款申请、审批和回调。
+- 结算流程和对账。
+- 售后中暂停结算。
 
 验收：
 
@@ -95,15 +104,16 @@
 
 ## 推荐执行顺序
 
-1. v0.2.1
+1. v0.2.1-r2
 2. v0.2.2
 3. v0.2.3
 4. v0.2.4
+5. v0.2.5
 
 原因：
 
-- 保障和售后是交易前提。
-- 账务字段需要在真实支付前固定。
-- 阿姨准入和生产风险开关需要在扩大流量前完成。
-- 真实支付最后接入，避免在规则不完整时引入资金风险。
-
+- 先修安全、隐私、production gate，避免上线前 P0 泄露或越权。
+- 再补服务保障和售后，避免服务失败后无处理入口。
+- 再统一报价和补贴财务字段，避免真实支付后反复迁移账务模型。
+- 再补家洁师准入和部署权限，保证试运营流量可控。
+- 最后接入真实支付、退款和结算，避免资金风险先于规则上线。

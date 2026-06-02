@@ -27,10 +27,7 @@ function customerActions(order) {
     ];
   }
   if (order.status === "waiting_payment") {
-    return [
-      { key: "pay", text: "立即支付", variant: "orange" },
-      { key: "detail", text: "查看详情", variant: "secondary" },
-    ];
+    return [{ key: "detail", text: "查看详情", variant: "secondary" }];
   }
   if (order.status === "confirmed" || order.status === "accepted" || order.status === "in_service") {
     return [
@@ -289,26 +286,7 @@ Page({
   },
 
   async payOrder(orderId) {
-    const order = this.data.allOrders.find((item) => item._id === orderId);
-    const amount = order ? order.priceText : "";
-    wx.showModal({
-      title: `确认支付 ${amount}？`,
-      content: "支付后费用将由平台托管，验收完成后结算给家洁师。",
-      confirmText: "确认支付",
-      success: async (result) => {
-        if (!result.confirm) return;
-        wx.showLoading({ title: "支付中" });
-        try {
-          await callCloud("mockPayOrder", { orderId });
-          wx.showToast({ title: "支付成功" });
-          await this.load();
-        } catch (error) {
-          showError(error);
-        } finally {
-          wx.hideLoading();
-        }
-      },
-    });
+    wx.showToast({ title: "支付能力待接入", icon: "none" });
   },
 
   async updateStatus(orderId, status, toastTitle) {

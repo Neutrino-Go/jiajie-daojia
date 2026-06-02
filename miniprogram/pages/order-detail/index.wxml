@@ -74,6 +74,11 @@
     <view wx:else class="locked">订单确认后双方才可查看联系方式。</view>
   </view>
 
+  <view class="card section">
+    <view class="panel-title">服务支持</view>
+    <button class="btn btn-secondary support-btn" bindtap="openSupport">联系客服</button>
+  </view>
+
   <view class="card section" wx:if="{{canComplete}}">
     <view class="panel-title">服务完成照片（选填）</view>
     <view class="section-tip">可上传打扫完成后的现场照片，方便客户验收。</view>

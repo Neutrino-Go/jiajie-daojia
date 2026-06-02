@@ -378,7 +378,7 @@ Page({
   },
 
   showCoupon() {
-    wx.showToast({ title: "优惠券暂未开放", icon: "none" });
+    wx.showToast({ title: "试运营优惠以实际订单为准", icon: "none" });
   },
 
   showIncome() {
@@ -411,18 +411,28 @@ Page({
   },
 
   contactService() {
-    wx.showToast({ title: "客服入口暂未开放", icon: "none" });
+    wx.navigateTo({ url: "/pages/support/index?type=service" });
   },
 
   feedback() {
-    wx.showToast({ title: "感谢反馈，入口暂未开放", icon: "none" });
+    wx.navigateTo({ url: "/pages/support/index?type=feedback" });
   },
 
   settings() {
+    const legalPages = [
+      "/pages/legal/user-agreement/index",
+      "/pages/legal/privacy-policy/index",
+      "/pages/legal/platform-rules/index",
+      "/pages/legal/service-guarantee/index",
+      "/pages/legal/refund-cancellation/index",
+      "/pages/legal/account-deletion/index",
+    ];
     wx.showActionSheet({
-      itemList: ["账号身份"],
+      itemList: ["账号身份", "用户协议", "隐私政策", "平台交易规则", "服务保障规则", "退款取消规则", "删除/注销说明"],
       success: (res) => {
         if (res.tapIndex === 0) this.confirmSwitchRole();
+        const page = legalPages[res.tapIndex - 1];
+        if (page) wx.navigateTo({ url: page });
       },
     });
   },

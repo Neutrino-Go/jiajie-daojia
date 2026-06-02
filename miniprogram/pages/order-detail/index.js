@@ -215,7 +215,7 @@ Page({
           isCustomerView &&
           ["waiting_response", "waiting_confirm", "assigned_waiting_accept", "assigned_declined", "waiting_payment", "confirmed", "pending"].includes(order.status) &&
           isCustomer,
-        canPay: isCustomerView && isCustomer && order.canPay,
+        canPay: false,
         canStart: isCleanerView && (order.status === "confirmed" || order.status === "accepted") && order.paymentStatus === "escrowed" && isAcceptedCleaner,
         canComplete: isCleanerView && order.status === "in_service" && isAcceptedCleaner,
         canConfirmComplete: isCustomerView && ["waiting_complete", "waiting_acceptance"].includes(order.status) && isCustomer,
@@ -273,23 +273,18 @@ Page({
 
   async startOrder() {
     if (this.data.order.paymentStatus !== "escrowed") {
-      wx.showToast({ title: "客户支付后才可开始服务", icon: "none" });
+      wx.showToast({ title: "试运营流程待平台确认", icon: "none" });
       return;
     }
     await this.mutate("updateOrderStatus", { orderId: this.data.id, status: "in_service" }, "已开始");
   },
 
   async payOrder() {
-    const amount = this.data.order ? this.data.order.priceText : "";
-    wx.showModal({
-      title: `确认支付 ${amount}？`,
-      content: "支付后费用将由平台托管，验收完成后结算给家洁师。",
-      confirmText: "确认支付",
-      success: async (result) => {
-        if (!result.confirm) return;
-        await this.mutate("mockPayOrder", { orderId: this.data.id }, "支付成功");
-      },
-    });
+    wx.showToast({ title: "支付能力待接入", icon: "none" });
+  },
+
+  openSupport() {
+    wx.navigateTo({ url: `/pages/support/index?orderId=${this.data.id}` });
   },
 
   async completeOrder() {

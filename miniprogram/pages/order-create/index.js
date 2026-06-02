@@ -441,4 +441,10 @@ Page({
       this.setData({ submitting: false });
     }
   },
+
+  openLegal(event) {
+    const page = event.currentTarget.dataset.page;
+    if (!page) return;
+    wx.navigateTo({ url: `/pages/legal/${page}/index` });
+  },
 });

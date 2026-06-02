@@ -1,0 +1,6 @@
+<view class="legal-page">
+  <view class="title">服务保障规则</view>
+  <view class="section">平台会根据订单记录、沟通记录和用户反馈协助处理服务争议。</view>
+  <view class="section">保障范围以实际保险合同和平台规则为准。</view>
+  <view class="section">保险能力待接入，以实际订单保障页为准。</view>
+</view>

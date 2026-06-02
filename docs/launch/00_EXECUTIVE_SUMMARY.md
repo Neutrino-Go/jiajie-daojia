@@ -1,66 +1,46 @@
 # 家洁到家上线前执行摘要
 
-版本：v0.2.0
+版本：v0.2.1-r2
 
-主题：prelaunch-research-audit-and-design
+主题：prelaunch-security-privacy-production-gates-fix
 
-日期：2026-06-01
+日期：2026-06-02
 
 ## 结论
 
-当前项目已经具备 MVP 订单主链路：住户发布需求、家洁师响应或接受指派、住户选择家洁师、模拟支付、服务开始、提交完成、验收评价、自动验收、收入统计和评价统计。
+v0.2.1-r2 聚焦正式上线前的 P0 安全、隐私和生产开关修复，不进入 v0.2.2。
 
-但按正式上线标准，仍存在明显 P0 风险：
+本轮修复方向：
 
-1. 支付仍依赖 `mockPayOrder`，没有真实微信支付 provider、支付回调幂等、退款和结算冻结机制。
-2. “资金托管”“已支付”“已结算”等交易文案已有雏形，但缺少真实资金链路支持；production 不应继续展示真实托管含义。
-3. 用户售后、返工、退款、投诉、财物损坏上报、客服工单尚未闭环。
-4. 阿姨准入只覆盖 `manualApproved`、`available`、`phoneVerified` 等基础字段，缺少实名认证、健康证、培训、服务证、保险等上线可信状态。
-5. 保险和保障不能在没有真实保单字段与平台规则时宣称“已投保”“百万保障”“全额赔付”。
-6. 当前定价仍以固定 5% 抽成和城市薪资系数为主，缺少报价版本、优惠券补贴、保障费、保险成本、毛利和阿姨收入保护的完整账务模型。
+1. 管理动作加 admin gate，production migration 加显式确认。
+2. production 判断 fail-closed，环境变量缺失时按 production 处理。
+3. mock 支付只允许显式 dev/test/local，production 直接拒绝。
+4. customerProfile、cleanerProfile 和 orderDetail 使用白名单脱敏。
+5. 普通读接口不再触发自动验收写操作。
+6. 关键管理动作、状态变更、隐藏订单、家洁师可接单开关写入最小审计日志。
+7. support ticket 最小闭环校验订单归属。
+8. 小程序去除模拟支付入口和资金托管承诺文案。
+9. 增加合规页面最小壳和入口。
 
-## 推荐上线策略
+## 仍是上线阻塞
 
-不建议直接正式上线完整交易闭环。
-
-推荐先进入“受控试运营”：
-
-- 若未接入微信支付：产品文案必须标注“试运营/线下支付”，不能写资金托管。
-- 若接入微信支付：必须先完成 v0.2.4 的支付、退款、结算、回调幂等和对账。
-- 阿姨端必须完成基础准入与人工审核，至少补齐实名、手机、健康证、培训和平台审核状态。
-- 每单必须有服务标准、保障快照、售后入口、服务完成照片和自动验收后的售后期。
+1. 真实微信支付、退款和结算未接入。
+2. CloudBase 数据库权限、云函数部署权限和 production 环境变量仍需人工复核。
+3. 微信开发者工具真实编译和体验版验证仍需执行。
+4. 完整售后、返工、退款工单流转尚未进入 v0.2.1-r2 范围。
+5. 定价引擎、补贴预算和账务字段仍待 v0.2.3。
 
 ## 后续版本顺序
 
-建议顺序：
+1. `v0.2.1-r2_prelaunch-security-privacy-production-gates-fix`
+2. `v0.2.2_order-protection-and-after-sales`
+3. `v0.2.3_pricing-engine-and-subsidy-accounting`
+4. `v0.2.4_cleaner-verification-and-launch-hardening`
+5. `v0.2.5_payment-refund-settlement`
 
-1. `v0.2.1_order-protection-and-after-sales`
-2. `v0.2.2_pricing-engine-and-city-price-rules`
-3. `v0.2.3_cleaner-verification-and-launch-hardening`
-4. `v0.2.4_payment-refund-settlement`
+## 受控试运营要求
 
-原因：
-
-- 先补保障和售后，避免“服务失败后无处理入口”。
-- 再统一报价和账务字段，避免后续支付结算反复迁移。
-- 再补阿姨准入和 production hardening，保证可控试运营。
-- 最后接入真实支付退款结算，避免资金风险先于规则上线。
-
-## 本阶段产出
-
-本阶段只新增研究、审计、方案文档和价格调研表，不修改小程序业务逻辑、UI、云函数或订单状态机。
-
-输出文件：
-
-- `docs/launch/01_PROTECTION_DESIGN.md`
-- `docs/launch/02_PRICING_RESEARCH_AND_POLICY.md`
-- `docs/launch/03_PRELAUNCH_AUDIT.md`
-- `docs/launch/04_DATA_MODEL_PLAN.md`
-- `docs/launch/05_PAYMENT_REFUND_SETTLEMENT_PLAN.md`
-- `docs/launch/06_COMPLIANCE_AND_PRIVACY_PLAN.md`
-- `docs/launch/07_IMPLEMENTATION_ROADMAP.md`
-- `docs/launch/08_RISK_REGISTER.md`
-- `docs/launch/price-research/competitive_pricing_matrix.csv`
-- `docs/launch/price-research/sources.md`
-- `docs/launch/price-research/pricing_research_notes.md`
-
+- 未接入微信支付前，不展示“资金托管”“平台托管中”“支付到平台托管”等生产承诺。
+- 订单处于 `waiting_payment` 时，页面应提示“支付能力待接入”或“试运营流程待平台确认”。
+- 保障范围以实际保险合同和平台规则为准。
+- 保险能力待接入时，只能写“保险能力待接入/以实际订单保障页为准”。

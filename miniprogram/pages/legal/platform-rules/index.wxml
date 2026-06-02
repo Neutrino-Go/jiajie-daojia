@@ -1,0 +1,6 @@
+<view class="legal-page">
+  <view class="title">平台交易规则</view>
+  <view class="section">用户可发布服务需求，家洁师可按服务范围和能力响应。订单确认、服务开始、服务完成和评价应以真实履约情况为准。</view>
+  <view class="section">试运营阶段部分流程需平台确认。支付能力待接入时，订单页面会明确提示当前状态。</view>
+  <view class="section">平台可对异常订单、违规内容和争议工单进行必要处理，并保留最小审计记录。</view>
+</view>
