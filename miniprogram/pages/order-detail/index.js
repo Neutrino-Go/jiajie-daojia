@@ -132,7 +132,8 @@ Page({
       const isCustomer = order.customerOpenid === data.viewerOpenid;
       const isAcceptedCleaner = order.acceptedCleanerOpenid === data.viewerOpenid;
       const isAssignedCleaner = order.assignedCleanerOpenid === data.viewerOpenid;
-      const hasResponse = (order.responses || []).some((response) => response.cleanerId === data.viewerOpenid);
+      const hasResponse =
+        Boolean(order.myResponse) || (order.responses || []).some((response) => response.cleanerId === data.viewerOpenid);
       const canContactStatus = ["confirmed", "accepted", "in_service", "waiting_complete", "waiting_acceptance", "completed", "auto_completed"].includes(order.status);
       const person = isCustomerView
         ? {

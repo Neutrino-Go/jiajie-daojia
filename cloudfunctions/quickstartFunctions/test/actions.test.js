@@ -392,6 +392,33 @@ async function runProductionGateTests() {
   } finally {
     devContext.restore();
   }
+
+  const prodCustomDaysDb = createPrivacyDB({ orders: [oldWaitingCompleteOrder()] });
+  const prodCustomDays = await loadFunction({ openid: "admin-a", db: prodCustomDaysDb, env: { APP_ENV: "production", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const result = await invoke(prodCustomDays.main, { action: "autoAcceptOverdueOrders", data: { days: 0.1 } });
+    expectFailed(result, "PRODUCTION_DISABLED", "正式环境自动验收不允许自定义天数", "production autoAcceptOverdueOrders custom days");
+  } finally {
+    prodCustomDays.restore();
+  }
+
+  const prodDefaultDaysDb = createPrivacyDB({ orders: [oldWaitingCompleteOrder()] });
+  const prodDefaultDays = await loadFunction({ openid: "admin-a", db: prodDefaultDaysDb, env: { APP_ENV: "production", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const result = await invoke(prodDefaultDays.main, { action: "autoAcceptOverdueOrders", data: {} });
+    assert.strictEqual(result.success, true, "production autoAcceptOverdueOrders default days should be allowed");
+  } finally {
+    prodDefaultDays.restore();
+  }
+
+  const devCustomDaysDb = createPrivacyDB({ orders: [oldWaitingCompleteOrder()] });
+  const devCustomDays = await loadFunction({ openid: "admin-a", db: devCustomDaysDb, env: { APP_ENV: "development", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const result = await invoke(devCustomDays.main, { action: "autoAcceptOverdueOrders", data: { days: 0.1 } });
+    assert.strictEqual(result.success, true, "development autoAcceptOverdueOrders custom days should be allowed for tests");
+  } finally {
+    devCustomDays.restore();
+  }
 }
 
 async function runAdminGateTests() {
@@ -627,6 +654,52 @@ async function runCleanerPrivacyTests() {
   } finally {
     confirmed.restore();
   }
+
+  for (const status of ["waiting_payment", "assigned_waiting_accept", "waiting_response"]) {
+    const db = createPrivacyDB({
+      orders: [
+        seedOrder({
+          _id: `customer-cleaner-contact-${status}`,
+          status,
+          paymentStatus: status === "waiting_payment" ? "pending_pay" : "unpaid",
+          publishMode: status === "assigned_waiting_accept" ? "assigned" : "public",
+          acceptedCleanerOpenid: status === "waiting_payment" ? "cleaner-a" : "",
+          assignedCleanerOpenid: status === "assigned_waiting_accept" ? "cleaner-a" : "",
+          cleanerId: "cleaner-a",
+          responses: status === "waiting_response" ? [] : [{ cleanerId: "cleaner-a", status: "selected" }],
+        }),
+      ],
+    });
+    const context = await loadFunction({ openid: "customer-a", db, env: { APP_ENV: "production" } });
+    try {
+      const result = await invoke(context.main, { action: "getOrderDetail", data: { orderId: `customer-cleaner-contact-${status}` } });
+      assert.strictEqual(result.success, true);
+      assertNoSensitiveKeys(result.data.cleaner || {}, ["phone", "wechatContact"], `customer ${status} cleaner profile`);
+    } finally {
+      context.restore();
+    }
+  }
+
+  const cleanerSelf = await loadFunction({ openid: "cleaner-a", db: createPrivacyDB(), env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(cleanerSelf.main, { action: "getCleanerProfile", data: {} });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.data.cleanerProfile.phone, "13900000000");
+    assert.strictEqual(result.data.cleanerProfile.wechatContact, "cleaner-wechat");
+  } finally {
+    cleanerSelf.restore();
+  }
+
+  const admin = await loadFunction({ openid: "admin-a", db: createPrivacyDB(), env: { APP_ENV: "production", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const result = await invoke(admin.main, { action: "getOrderDetail", data: { orderId: "order-a" } });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.data.cleaner.phone, "13900000000");
+    assert.strictEqual(result.data.cleaner.wechatContact, "cleaner-wechat");
+    assert.strictEqual(result.data.customerProfile.phone, "13800000000");
+  } finally {
+    admin.restore();
+  }
 }
 
 function assertAuditSafe(db, text) {
@@ -676,10 +749,21 @@ async function runSupportTicketTests() {
       assert.strictEqual(result.success, true);
       assert.strictEqual(db.data.supportTickets.length, 1);
       assert.strictEqual(db.data.supportTickets[0].orderId, "order-a");
+      assert.strictEqual(db.data.supportTickets[0].actorRole, actor === "customer-a" ? "customer" : "cleaner");
       assert(!JSON.stringify(result.data).includes("13800000000"), "support response should not expose order details");
     } finally {
       context.restore();
     }
+  }
+
+  const adminDb = createPrivacyDB();
+  const admin = await loadFunction({ openid: "admin-a", db: adminDb, env: { APP_ENV: "production", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const result = await invoke(admin.main, { action: "createSupportTicket", data: { orderId: "order-a", description: "管理员协助" } });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(adminDb.data.supportTickets[0].actorRole, "admin");
+  } finally {
+    admin.restore();
   }
 
   const generalDb = createPrivacyDB();
@@ -732,8 +816,24 @@ function runStaticMiniprogramTests() {
   assert.deepStrictEqual(cleanerOpenidUses, ["miniprogram/utils/cleaner-id.js"], "cleaner._openid should only remain in cleanerOpenidOf helper");
   const orderCreateText = fs.readFileSync(path.join(root, "miniprogram/pages/order-create/index.js"), "utf8");
   const orderDetailText = fs.readFileSync(path.join(root, "miniprogram/pages/order-detail/index.js"), "utf8");
+  const formatText = fs.readFileSync(path.join(root, "miniprogram/utils/format.js"), "utf8");
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
+  assert(/Boolean\(order\.myResponse\)|order\.myResponse/.test(orderDetailText), "order-detail should include order.myResponse in hasResponse");
+  assert(/responseCount:\s*Number\(order\.responseCount\s*\?\?/.test(formatText), "decorateOrder should preserve backend responseCount");
+
+  const { decorateOrder } = require(path.join(root, "miniprogram/utils/format.js"));
+  const decorated = decorateOrder(
+    seedOrder({
+      _id: "static-response-count",
+      status: "waiting_confirm",
+      responseCount: 2,
+      responses: undefined,
+    }),
+    "cleaner-b",
+    "cleaner"
+  );
+  assert.strictEqual(decorated.responseCount, 2, "decorateOrder should preserve responseCount when responses are hidden");
 }
 
 function readFiles(dir) {

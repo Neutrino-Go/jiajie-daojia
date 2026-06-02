@@ -187,8 +187,10 @@ function assertActionAllowedInProduction(actionName, data = {}) {
   if (actionName === "initCollectionsSeed") {
     requireNonProduction("initCollections seed");
   }
-  if (actionName === "autoAcceptOverdueOrders" && isProduction() && Number(data.days) <= 0) {
-    throw AppError("正式环境不允许使用危险自动验收参数", "PRODUCTION_DISABLED");
+  if (actionName === "autoAcceptOverdueOrders" && isProduction()) {
+    if (data.days !== undefined && data.days !== null && data.days !== "") {
+      throw AppError("正式环境自动验收不允许自定义天数", "PRODUCTION_DISABLED");
+    }
   }
 }
 
@@ -382,12 +384,26 @@ async function getOrder(orderId) {
   return order.data ? { ...order.data, _id: order.data._id || orderId } : null;
 }
 
-function visibleContact(order, openid, context = {}) {
+function canViewCustomerContact(order, viewerOpenid, context = {}) {
   if (context.isAdmin) return true;
   if (!order) return false;
-  if (order.customerOpenid === openid) return true;
+  if (order.customerOpenid === viewerOpenid) return true;
   if (!CONTACT_STATUSES.includes(order.status)) return false;
-  return order.acceptedCleanerOpenid === openid;
+  return order.acceptedCleanerOpenid === viewerOpenid;
+}
+
+function canViewCleanerContact(order, viewerOpenid, cleanerOpenid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order || !cleanerOpenid) return false;
+  if (viewerOpenid === cleanerOpenid) return true;
+  if (order.customerOpenid === viewerOpenid) {
+    return CONTACT_STATUSES.includes(order.status) && order.acceptedCleanerOpenid === cleanerOpenid;
+  }
+  return false;
+}
+
+function visibleContact(order, openid, context = {}) {
+  return canViewCustomerContact(order, openid, context);
 }
 
 function publicLocationSnapshot(location = {}) {
@@ -401,7 +417,7 @@ function publicLocationSnapshot(location = {}) {
 }
 
 function hideContactIfNeeded(order, openid, context = {}) {
-  if (visibleContact(order, openid, context)) {
+  if (canViewCustomerContact(order, openid, context)) {
     return order;
   }
   const publicLocation = publicLocationSnapshot(order.locationSnapshot || order);
@@ -431,7 +447,7 @@ function publicOrderForViewer(order, openid, context = {}) {
   }
   const responses = Array.isArray(order.responses) ? order.responses : [];
   const myResponse = responses.find((response) => response.cleanerId === openid);
-  const canViewFulfillment = visibleContact(order, openid, context);
+  const canViewFulfillment = canViewCustomerContact(order, openid, context);
   const next = canViewFulfillment ? { ...order } : hideContactIfNeeded(order, openid, context);
   delete next.customerOpenid;
   delete next.responses;
@@ -2307,15 +2323,15 @@ async function getOrderDetail(data) {
   if (order.acceptedCleanerOpenid || order.assignedCleanerOpenid) {
     const cleanerOpenid = order.acceptedCleanerOpenid || order.assignedCleanerOpenid;
     cleaner = await withCleanerStats(await getCleaner(cleanerOpenid), {
-      canViewContact: viewerIsAdmin || cleanerOpenid === openid || (isCustomer && visibleContact(order, openid, { isAdmin: viewerIsAdmin })),
+      canViewContact: canViewCleanerContact(order, openid, cleanerOpenid, { isAdmin: viewerIsAdmin }),
     });
   }
   const customerProfile = await getCustomerProfile(order.customerOpenid).catch(() => null);
-  const canViewCustomerContact = visibleContact(order, openid, { isAdmin: viewerIsAdmin });
+  const viewerCanViewCustomerContact = canViewCustomerContact(order, openid, { isAdmin: viewerIsAdmin });
   const customerProfileForViewer =
     viewerIsAdmin || isCustomer
       ? privateCustomerProfileForOwner(customerProfile)
-      : canViewCustomerContact && isAcceptedCleaner
+      : viewerCanViewCustomerContact && isAcceptedCleaner
         ? fulfillmentCustomerProfile(customerProfile)
         : publicCustomerProfile(customerProfile);
   const review = await findOne("reviews", { orderId: data.orderId });
@@ -2671,6 +2687,7 @@ async function createSupportTicket(data = {}) {
     throw AppError("请填写问题描述");
   }
   const viewerIsAdmin = await isAdmin(openid);
+  const user = await ensureUser(openid);
   let orderId = "";
   if (data.orderId) {
     const order = await getOrder(data.orderId);
@@ -2693,7 +2710,7 @@ async function createSupportTicket(data = {}) {
   const result = await db.collection("supportTickets").add({
     data: {
       actorOpenid: openid,
-      actorRole: viewerIsAdmin ? "admin" : "",
+      actorRole: viewerIsAdmin ? "admin" : user.role || user.currentRole || "",
       type: String(data.type || data.issueType || "general").trim().slice(0, 40),
       orderId,
       orderNo: String(data.orderNo || "").trim().slice(0, 80),

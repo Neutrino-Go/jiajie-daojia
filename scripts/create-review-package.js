@@ -802,11 +802,13 @@ function main() {
   const solution = args.solution || `围绕 ${title} 修复本次版本的实际产品、云函数、隐私、安全或交付阻塞项，并生成可复核审查包。`;
   const alternatives = args.alternatives || "未采用手工整理审查包，因为人工步骤容易遗漏 diff、上下文文件或测试失败信息。";
   const notModified = toList(args["not-modified"], [
-    "未修改小程序业务逻辑",
-    "未修改订单状态流转",
-    "未修改价格、抽成或收入计算",
-    "未修改云函数业务逻辑",
-    "未引入运行时依赖",
+    "未接入真实微信支付",
+    "未修改退款/结算流程",
+    "未修改定价引擎",
+    "未大改订单主状态机",
+    "未恢复前端 mockPayOrder",
+    "未修改 CloudBase 部署配置",
+    "未修改数据库安全规则",
   ]);
   const reviewFocus = toList(args["review-focus"], [
     "审查包是否覆盖完整 diff 和关键源码文件",

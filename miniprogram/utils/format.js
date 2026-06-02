@@ -599,7 +599,7 @@ function decorateOrder(order, openid, role = "", referenceLocation = null) {
     cleanerIncomeText: `¥${formatMoney(cleanerIncome)}`,
     roleText: viewerRole === "customer" ? "我发布的" : viewerRole === "cleaner" && isCleaner ? "客户发布" : "可接订单",
     customerMaskedPhone: maskPhone(order.contactPhone),
-    responseCount: (order.responses || []).length,
+    responseCount: Number(order.responseCount ?? (order.responses || []).length),
     reviewedText: reviewBadgeText,
     reviewStatusText: reviewBadgeText,
     reviewBadgeText,
