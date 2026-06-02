@@ -1,6 +1,6 @@
 const { callCloud, showError } = require("../../utils/cloud");
 const { ROLE_LABELS } = require("../../utils/constants");
-const { decorateCleaner, maskPhone, avatarUrlOf, avatarInitial } = require("../../utils/format");
+const { decorateCleaner, maskPhone, avatarUrlOf, avatarInitial, cleanerOpenidOf } = require("../../utils/format");
 const {
   getUserRole,
   roleName,
@@ -390,7 +390,7 @@ Page({
   },
 
   showCleanerProfile() {
-    const openid = this.data.cleaner?._openid || this.data.openid;
+    const openid = cleanerOpenidOf(this.data.cleaner) || this.data.openid;
     wx.navigateTo({ url: `/pages/cleaner-detail/index?openid=${openid}` });
   },
 

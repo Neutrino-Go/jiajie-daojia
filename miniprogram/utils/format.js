@@ -4,6 +4,7 @@ const {
 } = require("./constants");
 const { calculateDistanceKm, distanceDisplay } = require("./location");
 const { normalizeCleanerStats } = require("./cleaner-stats");
+const { cleanerOpenidOf } = require("./cleaner-id");
 const { BASE_PRICING, calculateOrderPrice } = require("../config/pricing");
 
 function roundMoney(value) {
@@ -675,6 +676,7 @@ module.exports = {
   scoreRecommendedCleaner,
   sortRecommendedCleaners,
   getCleanerDistanceText,
+  cleanerOpenidOf,
   decorateOrder,
   decorateCleaner,
 };

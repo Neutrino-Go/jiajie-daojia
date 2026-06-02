@@ -1,5 +1,5 @@
 const { callCloud, showError } = require("../../utils/cloud");
-const { decorateOrder, decorateCleaner, avatarUrlOf, avatarInitial, ratingReviewText, ratingValueText } = require("../../utils/format");
+const { decorateOrder, decorateCleaner, avatarUrlOf, avatarInitial, ratingReviewText, ratingValueText, cleanerOpenidOf } = require("../../utils/format");
 const { getUserRole, requireRole, getRoleLocation, shortRoleLocationLabel } = require("../../utils/session");
 
 const STAR_ITEMS = [1, 2, 3, 4, 5];
@@ -357,7 +357,7 @@ Page({
             {
               orderId: this.data.id,
               publishMode: "assigned",
-              assignedCleanerOpenid: cleaner._openid,
+              assignedCleanerOpenid: cleanerOpenidOf(cleaner),
             },
             "已重新指派"
           );

@@ -196,6 +196,18 @@ function scrubAuditValue(value, depth = 0) {
   if (value === null || value === undefined) return value;
   if (depth > 3) return "[omitted]";
   if (Array.isArray(value)) return value.slice(0, 20).map((item) => scrubAuditValue(item, depth + 1));
+  if (typeof value === "string") {
+    if (/1[3-9]\d{9}/.test(value)) return "[redacted]";
+    if (/cloud:\/\//i.test(value)) return "[redacted]";
+    if (/policy|wechat|id-card|health-card/i.test(value)) return "[redacted]";
+    if (/\d+\.\d{3,}/.test(value)) return "[redacted]";
+    return value;
+  }
+  if (typeof value === "number") {
+    const text = String(value);
+    if (/\d+\.\d{3,}/.test(text)) return "[redacted]";
+    return value;
+  }
   if (typeof value !== "object") return value;
   const sensitiveKey = /(phone|wechat|address|detail|location|latitude|longitude|fileid|fileID|policy|idcard|identity|health|certificate|contact)/i;
   return Object.keys(value).reduce((next, key) => {
@@ -372,10 +384,10 @@ async function getOrder(orderId) {
 
 function visibleContact(order, openid, context = {}) {
   if (context.isAdmin) return true;
-  if (!order || !CONTACT_STATUSES.includes(order.status)) {
-    return false;
-  }
-  return order.customerOpenid === openid || order.acceptedCleanerOpenid === openid;
+  if (!order) return false;
+  if (order.customerOpenid === openid) return true;
+  if (!CONTACT_STATUSES.includes(order.status)) return false;
+  return order.acceptedCleanerOpenid === openid;
 }
 
 function publicLocationSnapshot(location = {}) {
@@ -403,6 +415,33 @@ function hideContactIfNeeded(order, openid, context = {}) {
     longitude: null,
     locationSnapshot: publicLocation,
   };
+}
+
+function responseForViewer(response = {}) {
+  return {
+    cleanerId: response.cleanerId || "",
+    status: response.status || "",
+  };
+}
+
+function publicOrderForViewer(order, openid, context = {}) {
+  if (!order) return order;
+  if (context.isAdmin || order.customerOpenid === openid) {
+    return order;
+  }
+  const responses = Array.isArray(order.responses) ? order.responses : [];
+  const myResponse = responses.find((response) => response.cleanerId === openid);
+  const canViewFulfillment = visibleContact(order, openid, context);
+  const next = canViewFulfillment ? { ...order } : hideContactIfNeeded(order, openid, context);
+  delete next.customerOpenid;
+  delete next.responses;
+  next.responseCount = responses.length;
+  if (myResponse) {
+    next.myResponse = responseForViewer(myResponse);
+  } else {
+    delete next.myResponse;
+  }
+  return next;
 }
 
 function customerAddressOf(profile = {}) {
@@ -1650,7 +1689,7 @@ async function listOpenOrders(data) {
   }
   return ok(
     orders.map((order) =>
-      hideContactIfNeeded(
+      publicOrderForViewer(
         {
           ...order,
           ...publicOrderLocationFlag(order, cleanerLocation),
@@ -1674,7 +1713,7 @@ async function listAssignedOrders() {
   return ok(
     result.data
       .filter((order) => ["assigned_waiting_accept", "pending"].includes(order.status))
-      .map((order) => hideContactIfNeeded(order, openid))
+      .map((order) => publicOrderForViewer(order, openid))
   );
 }
 
@@ -1689,7 +1728,7 @@ async function listMyOrders() {
       .limit(100)
       .get();
     const orders = await attachReviewInfoList(customerOrders.data);
-    return ok(orders.filter((order) => !order.hiddenForCustomer).map((order) => hideContactIfNeeded(order, openid)));
+    return ok(orders.filter((order) => !order.hiddenForCustomer).map((order) => publicOrderForViewer(order, openid)));
   }
   if (user.role === "cleaner") {
     const acceptedOrders = await db
@@ -1722,7 +1761,7 @@ async function listMyOrders() {
     const cleanerOrders = await attachReviewInfoList(
       Object.values(byId).sort((first, second) => new Date(second.updatedAt) - new Date(first.updatedAt))
     );
-    return ok(cleanerOrders.filter((order) => !order.hiddenForCleaner).map((order) => hideContactIfNeeded(order, openid)));
+    return ok(cleanerOrders.filter((order) => !order.hiddenForCleaner).map((order) => publicOrderForViewer(order, openid)));
   }
   throw AppError("请先选择账号身份");
 }
@@ -2292,7 +2331,7 @@ async function getOrderDetail(data) {
     ? { ...order, reviewId: manualReview._id, hasReview: true, canEditReview: canEditReview(manualReview, now()) }
     : { ...order, reviewId: "", hasReview: false, canEditReview: false };
   return ok({
-    order: hideContactIfNeeded(orderWithReview, openid, { isAdmin: viewerIsAdmin }),
+    order: publicOrderForViewer(orderWithReview, openid, { isAdmin: viewerIsAdmin }),
     cleaner,
     customerProfile: customerProfileForViewer,
     review: manualReview,

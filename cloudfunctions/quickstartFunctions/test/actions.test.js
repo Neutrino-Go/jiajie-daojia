@@ -236,6 +236,19 @@ function assertNoSensitiveKeys(value, keys, name) {
   });
 }
 
+function assertHasOrderContact(order, name) {
+  assert(order.contactPhone, `${name} should expose contactPhone`);
+  assert(order.detailAddress, `${name} should expose detailAddress`);
+  assert(order.addressText, `${name} should expose addressText`);
+}
+
+function assertPublicOrderSafe(order, name) {
+  assertNoSensitiveKeys(order, ["customerOpenid", "contactPhone", "contactWechat", "detailAddress", "addressText"], name);
+  assert(order.latitude === undefined || order.latitude === null || order.latitude === "", `${name} should not expose latitude`);
+  assert(order.longitude === undefined || order.longitude === null || order.longitude === "", `${name} should not expose longitude`);
+  assert(!Array.isArray(order.responses), `${name} should not expose full responses`);
+}
+
 function seedUser(openid, role) {
   return { _id: `user-${openid}`, _openid: openid, role, currentRole: role, roles: [role] };
 }
@@ -483,6 +496,96 @@ async function runCustomerPrivacyTests() {
   }
 }
 
+async function runOrderViewerRegressionTests() {
+  for (const status of ["waiting_response", "waiting_payment"]) {
+    const db = createPrivacyDB({
+      orders: [
+        seedOrder({
+          _id: `owner-${status}`,
+          status,
+          paymentStatus: status === "waiting_payment" ? "pending_pay" : "unpaid",
+          acceptedCleanerOpenid: status === "waiting_payment" ? "cleaner-a" : "",
+          cleanerId: status === "waiting_payment" ? "cleaner-a" : "",
+          responses: status === "waiting_payment" ? [{ cleanerId: "cleaner-a", status: "selected" }] : [],
+        }),
+      ],
+    });
+    const context = await loadFunction({ openid: "customer-a", db, env: { APP_ENV: "production" } });
+    try {
+      const detail = await invoke(context.main, { action: "getOrderDetail", data: { orderId: `owner-${status}` } });
+      assert.strictEqual(detail.success, true);
+      assertHasOrderContact(detail.data.order, `owner detail ${status}`);
+      const list = await invoke(context.main, { action: "listMyOrders", data: {} });
+      assert.strictEqual(list.success, true);
+      assertHasOrderContact(list.data[0], `owner list ${status}`);
+    } finally {
+      context.restore();
+    }
+  }
+
+  const openDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "open-order",
+        status: "waiting_response",
+        paymentStatus: "unpaid",
+        acceptedCleanerOpenid: "",
+        cleanerId: "",
+        responses: [
+          { cleanerId: "cleaner-a", status: "pending", phone: "13900000000" },
+          { cleanerId: "cleaner-c", status: "pending", phone: "13600000000" },
+        ],
+      }),
+    ],
+  });
+  const openContext = await loadFunction({ openid: "cleaner-b", db: openDb, env: { APP_ENV: "production" } });
+  try {
+    const list = await invoke(openContext.main, { action: "listOpenOrders", data: { scope: "all" } });
+    assert.strictEqual(list.success, true);
+    assert.strictEqual(list.data.length, 1);
+    assertPublicOrderSafe(list.data[0], "listOpenOrders");
+    assert.strictEqual(list.data[0].responseCount, 2, "listOpenOrders should expose responseCount");
+  } finally {
+    openContext.restore();
+  }
+
+  const unselectedDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "waiting-confirm",
+        status: "waiting_confirm",
+        paymentStatus: "unpaid",
+        acceptedCleanerOpenid: "",
+        cleanerId: "",
+        responses: [
+          { cleanerId: "cleaner-b", status: "pending", quotedAmount: 100 },
+          { cleanerId: "cleaner-a", status: "pending", quotedAmount: 120 },
+        ],
+      }),
+    ],
+  });
+  const unselected = await loadFunction({ openid: "cleaner-b", db: unselectedDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(unselected.main, { action: "getOrderDetail", data: { orderId: "waiting-confirm" } });
+    assert.strictEqual(result.success, true);
+    assertPublicOrderSafe(result.data.order, "unselected cleaner order detail");
+    assert.strictEqual(result.data.order.responseCount, 2);
+    assert.deepStrictEqual(result.data.order.myResponse, { cleanerId: "cleaner-b", status: "pending" });
+  } finally {
+    unselected.restore();
+  }
+
+  const owner = await loadFunction({ openid: "customer-a", db: unselectedDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(owner.main, { action: "getOrderDetail", data: { orderId: "waiting-confirm" } });
+    assert.strictEqual(result.success, true);
+    assert(Array.isArray(result.data.order.responses), "customer owner should still see responses");
+    assert.strictEqual(result.data.order.responses.length, 2);
+  } finally {
+    owner.restore();
+  }
+}
+
 async function runCleanerPrivacyTests() {
   const malformedDb = createPrivacyDB({
     cleaners: [seedCleaner("cleaner-a"), { _id: "malformed", phone: "13911112222", wechatContact: "leak", manualApproved: true, available: true }],
@@ -621,6 +724,16 @@ function runStaticMiniprogramTests() {
   ["暂未开放", "百万保障", "全额赔付", "已投保", "平台托管中", "支付到平台托管", "费用已由平台托管"].forEach((phrase) => {
     assert(!miniprogramText.includes(phrase), `miniprogram should not contain ${phrase}`);
   });
+
+  const files = listTextFiles(path.join(root, "miniprogram"));
+  const cleanerOpenidUses = files
+    .filter((file) => /cleaner\._openid/.test(fs.readFileSync(file, "utf8")))
+    .map((file) => path.relative(root, file).replace(/\\/g, "/"));
+  assert.deepStrictEqual(cleanerOpenidUses, ["miniprogram/utils/cleaner-id.js"], "cleaner._openid should only remain in cleanerOpenidOf helper");
+  const orderCreateText = fs.readFileSync(path.join(root, "miniprogram/pages/order-create/index.js"), "utf8");
+  const orderDetailText = fs.readFileSync(path.join(root, "miniprogram/pages/order-detail/index.js"), "utf8");
+  assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
+  assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
 }
 
 function readFiles(dir) {
@@ -633,10 +746,21 @@ function readFiles(dir) {
   return text;
 }
 
+function listTextFiles(dir) {
+  let files = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) files = files.concat(listTextFiles(full));
+    else if (/\.(js|wxml|wxss|json)$/.test(entry.name)) files.push(full);
+  }
+  return files;
+}
+
 runProductionGateTests()
   .then(runAdminGateTests)
   .then(runReadDoesNotAutoAcceptTests)
   .then(runCustomerPrivacyTests)
+  .then(runOrderViewerRegressionTests)
   .then(runCleanerPrivacyTests)
   .then(runAuditLogTests)
   .then(runSupportTicketTests)

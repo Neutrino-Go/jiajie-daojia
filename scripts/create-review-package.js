@@ -18,6 +18,12 @@ const LIST_ARGS = new Set([
   "manual-check",
   "not-tested",
   "risk",
+  "fixed",
+  "data-collection",
+  "api-impact",
+  "query-impact",
+  "permission-impact",
+  "data-impact",
   "context",
   "test-log-file",
   "test-command",
@@ -45,6 +51,12 @@ Review metadata options:
   --manual-check <text>        Manual check note. Repeatable.
   --not-tested <text>          Untested area. Repeatable.
   --risk <text>                Risk item. Repeatable.
+  --fixed <text>               Fixed item for changelog. Repeatable.
+  --data-collection <text>     Affected data collection. Repeatable.
+  --api-impact <text>          Cloud function/API impact. Repeatable.
+  --query-impact <text>        Page query/navigation impact. Repeatable.
+  --permission-impact <text>   User role/permission impact. Repeatable.
+  --data-impact <text>         Other data/API impact note. Repeatable.
 
 Test evidence options:
   --test <text>                Free-form test note. Repeatable.
@@ -256,7 +268,13 @@ function mdList(items, empty = "无") {
 
 function checkboxList(items) {
   if (!items || !items.length) return "- [ ] 无";
-  return items.map((item) => `- [ ] ${item}`).join("\n");
+  return items
+    .map((item) => {
+      const text = String(item || "").trim();
+      if (/^\[[xX ]\]\s+/.test(text)) return `- ${text}`;
+      return `- [ ] ${text}`;
+    })
+    .join("\n");
 }
 
 function ensureDir(dir) {
@@ -781,7 +799,7 @@ function main() {
   const title = args.title || theme.replace(/-/g, " ");
   const goals = toList(args.goal, [`围绕“${title}”生成可独立审查的版本交付包。`]);
   const rootCause = args["root-cause"] || "当前迭代需要形成可追踪、可复现、可二次 Review 的固定交付产物。";
-  const solution = args.solution || "使用审查包脚本统一收集 Git 信息、diff、变更文件、上下文文件、测试记录、风险与回滚说明，并输出 zip 包。";
+  const solution = args.solution || `围绕 ${title} 修复本次版本的实际产品、云函数、隐私、安全或交付阻塞项，并生成可复核审查包。`;
   const alternatives = args.alternatives || "未采用手工整理审查包，因为人工步骤容易遗漏 diff、上下文文件或测试失败信息。";
   const notModified = toList(args["not-modified"], [
     "未修改小程序业务逻辑",
@@ -808,14 +826,24 @@ function main() {
   const testLogFiles = toList(args["test-log-file"], []);
   const manualChecks = toList(args["manual-check"], ["未执行页面级手动测试。"]);
   const notTested = toList(args["not-tested"], ["未使用微信开发者工具编译。"]);
-  const risks = toList(args.risk, ["脚本是交付工具，不参与小程序运行；主要风险是审查包元数据填写不完整。"]);
+  const risks = toList(args.risk, ["未声明具体运行时风险；请结合 changed files、测试报告和 GPT Review 重点确认。"]);
+
+  const fixedItems = toList(args.fixed, goals);
+  const dataCollections = toList(args["data-collection"], []);
+  const apiImpacts = toList(args["api-impact"], []);
+  const queryImpacts = toList(args["query-impact"], []);
+  const permissionImpacts = toList(args["permission-impact"], []);
+  const dataImpacts = toList(args["data-impact"], []);
+  const solutionReason = args["solution-reason"] || "This package documents the actual product and cloud-function changes for the current iteration, including security, privacy, production gates, API impacts, tests, and rollback notes.";
 
   const manualContextRaw = args.context || [];
   const context = getContextFiles(files, manualContextRaw);
   const autoContextFiles = context.auto.filter((file) => fs.existsSync(path.join(ROOT, file)));
   const manualContextFiles = context.manual;
 
-  const uiChanged = files.some((file) => /^miniprogram\/.+\.(wxml|wxss)$/.test(file));
+  const uiChanged = files.some((file) => /^miniprogram\/.+\.(js|wxml|wxss|json)$/.test(file));
+  const pageChanged = files.some((file) => /^miniprogram\/pages\/.+\.(js|wxml|wxss|json)$/.test(file));
+  const componentChanged = files.some((file) => /^miniprogram\/components\/.+\.(js|wxml|wxss|json)$/.test(file));
   const cloudChanged = files.some((file) => file.startsWith("cloudfunctions/"));
   const businessLogicChanged = files.some((file) =>
     /^miniprogram\/pages\/|^miniprogram\/components\/|^miniprogram\/utils\/|^cloudfunctions\//.test(file)
@@ -918,7 +946,7 @@ ${rootCause}
 ${solution}
 
 ## 采用该方案的原因
-该方案把审查包生成流程固化为脚本，后续每次 Version 迭代可以复用同一套目录结构、Git 记录、diff、源码副本、上下文文件和风险说明，降低人工漏项概率。
+${solutionReason}
 
 ## 未采用的替代方案
 ${alternatives}
@@ -930,7 +958,7 @@ ${businessLogicChanged ? "本次包含可能影响小程序运行代码的文件
 ${uiChanged ? "本次包含 WXML/WXSS 变更，需要检查相关页面显示。" : "无 UI 运行表现影响。"}
 
 ## 对数据结构的影响判断
-未发现数据库字段或本地缓存结构变更。
+${dataCollections.length || dataImpacts.length ? mdList([...dataCollections.map((item) => `collection: ${item}`), ...dataImpacts]) : "未声明数据库集合、字段或本地缓存结构变更。"}
 
 ## 对云函数的影响判断
 ${cloudChanged ? "本次包含 cloudfunctions 目录变更，请检查云函数入参、返回值和部署影响。" : "未修改云函数。"}
@@ -948,7 +976,7 @@ ${mdList(categorized.added)}
 ${mdList(categorized.modified)}
 
 ## Fixed
-无
+${mdList(fixedItems)}
 
 ## Removed
 ${mdList(categorized.deleted)}
@@ -1125,19 +1153,19 @@ ${uiChanged ? "- 住户端订单页\n- 家洁师端接单首页\n- 家洁师端�
 ${mdList(risks)}
 
 ## Affected Pages
-${uiChanged ? "涉及 UI 文件，需按变更文件确认页面范围。" : "无页面运行影响。"}
+${pageChanged ? "涉及 miniprogram/pages 运行文件，请检查订单创建、订单详情、清洁师列表/收藏、个人中心等页面展示、跳转和字段兼容。" : "未发现页面运行文件变更。"}
 
 ## Affected Components
-${files.some((file) => file.includes("/components/")) ? "涉及组件文件，请检查复用场景。" : "无组件运行影响。"}
+${componentChanged ? "涉及 miniprogram/components 运行文件，请检查 aunt-card、cleaner-card、order-card 等复用场景。" : "未发现组件运行文件变更。"}
 
 ## Data Risk
-未发现数据结构变更。
+${dataCollections.length || dataImpacts.length ? mdList([...dataCollections.map((item) => `collection: ${item}`), ...dataImpacts]) : "未声明数据结构变更。"}
 
 ## Backend Risk
 ${cloudChanged ? "涉及云函数目录，请确认是否需要部署。" : "未修改云函数。"}
 
 ## Online User Risk
-${businessLogicChanged ? "存在运行时代码变更，请按验收标准验证后发布。" : "低。本次为审查包工具链变更，不影响线上小程序运行。"}
+${businessLogicChanged ? "存在运行时代码变更，请按验收标准验证后发布。" : "低。未发现运行时代码变更。"}
 
 ## Rollback Plan
 回退以下文件：
@@ -1160,15 +1188,29 @@ ${checkboxList(acceptance)}
     path.join(packageDir, "14_DATA_AND_API_IMPACT.md"),
     `# Data and API Impact
 
-- 数据库字段：无影响
-- 云函数入参：${cloudChanged ? "请检查 cloudfunctions 变更" : "无影响"}
-- 云函数返回值：${cloudChanged ? "请检查 cloudfunctions 变更" : "无影响"}
-- 本地缓存：无影响
-- 页面 query 参数：无影响
-- 组件 properties：${files.some((file) => file.includes("/components/")) ? "请检查组件变更" : "无影响"}
-- event 事件：无影响
-- 订单状态枚举：无影响
-- 用户角色权限：无影响
+## 数据集合影响
+${mdList(dataCollections, "未声明数据集合影响")}
+
+## 云函数 action/API 影响
+${mdList(apiImpacts.length ? apiImpacts : cloudChanged ? ["请检查 cloudfunctions 变更"] : [], "无影响")}
+
+## 页面 query / navigation 影响
+${mdList(queryImpacts, "无影响")}
+
+## 用户角色权限影响
+${mdList(permissionImpacts, "无影响")}
+
+## 其他数据/API 影响
+${mdList(dataImpacts, "无影响")}
+
+## 组件 properties
+${componentChanged ? "请检查组件变更" : "无影响"}
+
+## event 事件
+无影响
+
+## 订单状态枚举
+无影响
 `
   );
 
@@ -1178,7 +1220,7 @@ ${checkboxList(acceptance)}
     `# Codex Notes
 
 ## 最不确定的地方
-${args.uncertainty || "脚本只能根据 Git 状态自动推断变更范围；业务背景、手动测试结果和截图仍需要调用者通过参数或人工补充。"}
+${args.uncertainty || "最不确定的是运行时页面展示、真实环境权限和人工/工具编译结果；请结合测试报告、截图和部署前检查复核。"}
 
 ## 希望 GPT 重点看什么
 ${mdList(reviewFocus)}
@@ -1190,7 +1232,7 @@ ${mdList(risks)}
 ${mdList(notTested)}
 
 ## 临时方案或技术债
-${args.debt || "审查包脚本优先使用 PowerShell Compress-Archive 生成 zip，并提供 pwsh 与 zip -r fallback；如三者均不可用，会保留目录并明确失败原因。"}
+${args.debt || "未声明额外技术债；请重点复核未执行测试、未验证环境和 MANIFEST 中列出的变更范围。"}
 
 ${baseInfo.fallbackSingleCommit ? "## Diff Fallback\n未找到可用 baseCommit，本次审查包退化为 HEAD 单提交模式。\n" : ""}
 `
