@@ -640,6 +640,57 @@ async function runCleanerPrivacyTests() {
     listContext.restore();
   }
 
+  const reviewDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "review-order",
+        status: "completed",
+        paymentStatus: "settled",
+        serviceType: "深度保洁",
+      }),
+    ],
+    reviews: [
+      {
+        _id: "review-public",
+        orderId: "review-order",
+        customerOpenid: "customer-a",
+        cleanerOpenid: "cleaner-a",
+        serviceType: "",
+        rating: 4.5,
+        content: "服务认真，沟通顺畅",
+        imageUrls: ["cloud://review-image"],
+        source: "manual",
+        editCount: 1,
+        internalNote: "review-internal-note",
+        moderationStatus: "approved",
+        createdAt: "2026-05-21T10:00:00.000Z",
+        updatedAt: "2026-05-22T10:00:00.000Z",
+      },
+    ],
+  });
+  const reviewContext = await loadFunction({ openid: "customer-b", db: reviewDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(reviewContext.main, { action: "getCleanerDetail", data: { cleanerOpenid: "cleaner-a" } });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.data.recentReviews.length, 1);
+    const review = result.data.recentReviews[0];
+    assertNoSensitiveKeys(
+      review,
+      ["customerOpenid", "cleanerOpenid", "orderId", "source", "editCount", "internalNote", "moderationStatus"],
+      "public recent review"
+    );
+    assert.strictEqual(review._id, "review-public");
+    assert.strictEqual(review.rating, 4.5);
+    assert.strictEqual(review.content, "服务认真，沟通顺畅");
+    assert.deepStrictEqual(review.imageUrls, ["cloud://review-image"]);
+    assert.strictEqual(review.customerNameMasked, "客***");
+    assert.strictEqual(review.serviceType, "深度保洁");
+    assert.strictEqual(review.createdAt, "2026-05-21T10:00:00.000Z");
+    assert.strictEqual(review.updatedAt, "2026-05-22T10:00:00.000Z");
+  } finally {
+    reviewContext.restore();
+  }
+
   const confirmed = await loadFunction({ openid: "customer-a", db: createPrivacyDB(), env: { APP_ENV: "production" } });
   try {
     const result = await invoke(confirmed.main, { action: "getOrderDetail", data: { orderId: "order-a" } });
@@ -817,10 +868,15 @@ function runStaticMiniprogramTests() {
   const orderCreateText = fs.readFileSync(path.join(root, "miniprogram/pages/order-create/index.js"), "utf8");
   const orderDetailText = fs.readFileSync(path.join(root, "miniprogram/pages/order-detail/index.js"), "utf8");
   const formatText = fs.readFileSync(path.join(root, "miniprogram/utils/format.js"), "utf8");
+  const cloudIndexText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/index.js"), "utf8");
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
   assert(/Boolean\(order\.myResponse\)|order\.myResponse/.test(orderDetailText), "order-detail should include order.myResponse in hasResponse");
   assert(/responseCount:\s*Number\(order\.responseCount\s*\?\?/.test(formatText), "decorateOrder should preserve backend responseCount");
+  assert(
+    !/function decorateReviewForDisplay[\s\S]*?return\s*{\s*\.\.\.review/.test(cloudIndexText),
+    "decorateReviewForDisplay should not spread raw review fields"
+  );
 
   const { decorateOrder } = require(path.join(root, "miniprogram/utils/format.js"));
   const decorated = decorateOrder(

@@ -855,11 +855,16 @@ function maskNickname(name) {
 }
 
 function decorateReviewForDisplay(review, customerProfile = null, order = null) {
+  if (!review) return null;
   return {
-    ...review,
+    _id: review._id || "",
+    rating: Number(review.rating || 0),
+    content: review.content || "",
     imageUrls: normalizeReviewImageUrls(review.imageUrls),
     customerNameMasked: maskNickname(customerProfile && customerProfile.nickname),
     serviceType: review.serviceType || (order && order.serviceType) || "",
+    createdAt: review.createdAt || "",
+    updatedAt: review.updatedAt || review.createdAt || "",
   };
 }
 
