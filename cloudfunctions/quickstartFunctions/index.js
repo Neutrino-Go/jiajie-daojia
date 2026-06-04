@@ -402,6 +402,23 @@ function canViewCleanerContact(order, viewerOpenid, cleanerOpenid, context = {})
   return false;
 }
 
+function canViewOrderPrivateNote(order, viewerOpenid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order) return false;
+  if (order.customerOpenid === viewerOpenid) return true;
+  return canViewCustomerContact(order, viewerOpenid, context);
+}
+
+function canViewOrderParticipantIds(order, viewerOpenid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order) return false;
+  return (
+    order.customerOpenid === viewerOpenid ||
+    order.acceptedCleanerOpenid === viewerOpenid ||
+    order.assignedCleanerOpenid === viewerOpenid
+  );
+}
+
 function visibleContact(order, openid, context = {}) {
   return canViewCustomerContact(order, openid, context);
 }
@@ -449,6 +466,14 @@ function publicOrderForViewer(order, openid, context = {}) {
   const myResponse = responses.find((response) => response.cleanerId === openid);
   const canViewFulfillment = canViewCustomerContact(order, openid, context);
   const next = canViewFulfillment ? { ...order } : hideContactIfNeeded(order, openid, context);
+  if (!canViewOrderPrivateNote(order, openid, context)) {
+    next.note = "";
+  }
+  if (!canViewOrderParticipantIds(order, openid, context)) {
+    delete next.acceptedCleanerOpenid;
+    delete next.assignedCleanerOpenid;
+    delete next.cleanerId;
+  }
   delete next.customerOpenid;
   delete next.responses;
   next.responseCount = responses.length;

@@ -243,7 +243,11 @@ function assertHasOrderContact(order, name) {
 }
 
 function assertPublicOrderSafe(order, name) {
-  assertNoSensitiveKeys(order, ["customerOpenid", "contactPhone", "contactWechat", "detailAddress", "addressText"], name);
+  assertNoSensitiveKeys(
+    order,
+    ["customerOpenid", "contactPhone", "contactWechat", "detailAddress", "addressText", "note", "acceptedCleanerOpenid", "assignedCleanerOpenid", "cleanerId"],
+    name
+  );
   assert(order.latitude === undefined || order.latitude === null || order.latitude === "", `${name} should not expose latitude`);
   assert(order.longitude === undefined || order.longitude === null || order.longitude === "", `${name} should not expose longitude`);
   assert(!Array.isArray(order.responses), `${name} should not expose full responses`);
@@ -533,6 +537,7 @@ async function runOrderViewerRegressionTests() {
           paymentStatus: status === "waiting_payment" ? "pending_pay" : "unpaid",
           acceptedCleanerOpenid: status === "waiting_payment" ? "cleaner-a" : "",
           cleanerId: status === "waiting_payment" ? "cleaner-a" : "",
+          note: "Door code 1234, phone 13800000000, test only",
           responses: status === "waiting_payment" ? [{ cleanerId: "cleaner-a", status: "selected" }] : [],
         }),
       ],
@@ -542,9 +547,11 @@ async function runOrderViewerRegressionTests() {
       const detail = await invoke(context.main, { action: "getOrderDetail", data: { orderId: `owner-${status}` } });
       assert.strictEqual(detail.success, true);
       assertHasOrderContact(detail.data.order, `owner detail ${status}`);
+      assert.strictEqual(detail.data.order.note, "Door code 1234, phone 13800000000, test only", `owner detail ${status} should expose own note`);
       const list = await invoke(context.main, { action: "listMyOrders", data: {} });
       assert.strictEqual(list.success, true);
       assertHasOrderContact(list.data[0], `owner list ${status}`);
+      assert.strictEqual(list.data[0].note, "Door code 1234, phone 13800000000, test only", `owner list ${status} should expose own note`);
     } finally {
       context.restore();
     }
@@ -556,8 +563,10 @@ async function runOrderViewerRegressionTests() {
         _id: "open-order",
         status: "waiting_response",
         paymentStatus: "unpaid",
-        acceptedCleanerOpenid: "",
-        cleanerId: "",
+        acceptedCleanerOpenid: "cleaner-a",
+        assignedCleanerOpenid: "cleaner-a",
+        cleanerId: "cleaner-a",
+        note: "Door code 1234, phone 13800000000, test only",
         responses: [
           { cleanerId: "cleaner-a", status: "pending", phone: "13900000000" },
           { cleanerId: "cleaner-c", status: "pending", phone: "13600000000" },
@@ -582,8 +591,10 @@ async function runOrderViewerRegressionTests() {
         _id: "waiting-confirm",
         status: "waiting_confirm",
         paymentStatus: "unpaid",
-        acceptedCleanerOpenid: "",
-        cleanerId: "",
+        acceptedCleanerOpenid: "cleaner-a",
+        assignedCleanerOpenid: "cleaner-a",
+        cleanerId: "cleaner-a",
+        note: "Door code 1234, phone 13800000000, test only",
         responses: [
           { cleanerId: "cleaner-b", status: "pending", quotedAmount: 100 },
           { cleanerId: "cleaner-a", status: "pending", quotedAmount: 120 },
@@ -608,8 +619,32 @@ async function runOrderViewerRegressionTests() {
     assert.strictEqual(result.success, true);
     assert(Array.isArray(result.data.order.responses), "customer owner should still see responses");
     assert.strictEqual(result.data.order.responses.length, 2);
+    assert.strictEqual(result.data.order.note, "Door code 1234, phone 13800000000, test only");
+    assert.strictEqual(result.data.order.acceptedCleanerOpenid, "cleaner-a");
+    assert.strictEqual(result.data.order.cleanerId, "cleaner-a");
   } finally {
     owner.restore();
+  }
+
+  for (const status of ["confirmed", "in_service", "waiting_complete", "completed"]) {
+    const db = createPrivacyDB({
+      orders: [
+        seedOrder({
+          _id: `confirmed-note-${status}`,
+          status,
+          paymentStatus: "escrowed",
+          note: "Door code 1234, phone 13800000000, test only",
+        }),
+      ],
+    });
+    const context = await loadFunction({ openid: "cleaner-a", db, env: { APP_ENV: "production" } });
+    try {
+      const result = await invoke(context.main, { action: "getOrderDetail", data: { orderId: `confirmed-note-${status}` } });
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.data.order.note, "Door code 1234, phone 13800000000, test only", `accepted cleaner ${status} should expose fulfillment note`);
+    } finally {
+      context.restore();
+    }
   }
 }
 
