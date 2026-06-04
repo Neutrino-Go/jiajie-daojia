@@ -1,0 +1,6 @@
+{
+  "scripts": {
+    "review:pack": "node scripts/create-review-package.js",
+    "review:pack:test": "node scripts/test-review-package.js"
+  }
+}

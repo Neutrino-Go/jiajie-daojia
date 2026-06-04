@@ -21,6 +21,7 @@ project.private.config.json
 dist/
 build/
 coverage/
+review-packages/
 
 # Local preview and debug screenshots generated during UI work
 *-preview*.png
