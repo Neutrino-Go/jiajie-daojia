@@ -360,6 +360,9 @@ function createPrivacyDB(extra = {}) {
     orders: [seedOrder()],
     favorites: [],
     reviews: [],
+    serviceStandards: [],
+    protectionPlans: [],
+    protectionClaims: [],
     auditLogs: [],
     supportTickets: [],
     ...extra,
@@ -863,6 +866,405 @@ async function runSupportTicketTests() {
   }
 }
 
+function assertNoProtectionPromiseText(value, name) {
+  const text = JSON.stringify(value || {});
+  ["百万保障", "全额赔付", "已投保"].forEach((phrase) => {
+    assert(!text.includes(phrase), `${name} should not contain ${phrase}`);
+  });
+}
+
+async function runProtectionWorkflowTests() {
+  const configDb = createPrivacyDB({
+    serviceStandards: [
+      {
+        _id: "standard-disabled",
+        serviceType: "日常保洁",
+        title: "disabled",
+        enabled: false,
+        internalNote: "hidden",
+      },
+      {
+        _id: "standard-basic",
+        serviceType: "日常保洁",
+        title: "日常保洁服务标准",
+        includedItems: ["地面清洁"],
+        excludedItems: ["高空作业"],
+        customerTips: ["提前收纳贵重物品"],
+        cleanerTips: ["服务前确认范围"],
+        version: "2026-06",
+        enabled: true,
+        internalNote: "hidden",
+      },
+    ],
+    protectionPlans: [
+      {
+        _id: "plan-basic",
+        planCode: "trial-basic",
+        title: "试运营服务保障",
+        summary: "不满意可提交售后申请，平台将在试运营规则下协助处理。",
+        coverageItems: ["返工协商", "投诉反馈"],
+        limitations: ["保障范围以实际保险合同和平台规则为准。"],
+        afterSaleWindowHours: 72,
+        reworkAllowed: true,
+        refundAllowed: true,
+        propertyDamageReportAllowed: true,
+        insuranceStatusText: "保险能力待接入/以实际订单保障页为准",
+        version: "2026-06",
+        enabled: true,
+        internalNote: "hidden",
+      },
+    ],
+  });
+  const configContext = await loadFunction({ openid: "customer-a", db: configDb, env: { APP_ENV: "production" } });
+  try {
+    const standards = await invoke(configContext.main, { action: "getServiceStandards", data: {} });
+    assert.strictEqual(standards.success, true);
+    assert.strictEqual(standards.data.standards.length, 1);
+    assert.strictEqual(standards.data.standards[0]._id, "standard-basic");
+    assertNoSensitiveKeys(standards.data.standards[0], ["internalNote"], "public service standard");
+
+    const plans = await invoke(configContext.main, { action: "getProtectionPlans", data: {} });
+    assert.strictEqual(plans.success, true);
+    assert.strictEqual(plans.data.plans.length, 1);
+    assertNoProtectionPromiseText(plans.data, "protection plans");
+    assertNoSensitiveKeys(plans.data.plans[0], ["internalNote"], "public protection plan");
+  } finally {
+    configContext.restore();
+  }
+
+  const baseOrder = seedOrder();
+  const createOrderDb = createPrivacyDB({
+    orders: [],
+    serviceStandards: [
+      {
+        _id: "standard-create",
+        serviceType: baseOrder.serviceType,
+        title: "Standard for createOrder",
+        includedItems: ["floor"],
+        excludedItems: ["high risk work"],
+        customerTips: ["confirm scope"],
+        cleanerTips: ["confirm before service"],
+        version: "test",
+        enabled: true,
+        internalNote: "hidden",
+      },
+    ],
+    protectionPlans: [
+      {
+        _id: "plan-create",
+        planCode: "trial-create",
+        title: "Trial service protection",
+        summary: "After-sales requests are handled by manual platform review during trial operations.",
+        coverageItems: ["rework request", "complaint feedback"],
+        limitations: ["Coverage follows actual contract and platform rules."],
+        afterSaleWindowHours: 72,
+        reworkAllowed: true,
+        refundAllowed: true,
+        propertyDamageReportAllowed: true,
+        insuranceStatusText: "Insurance capability is pending integration.",
+        version: "test",
+        enabled: true,
+        internalNote: "hidden",
+      },
+    ],
+  });
+  const createOrderContext = await loadFunction({ openid: "customer-a", db: createOrderDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(createOrderContext.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: baseOrder.serviceType,
+        city: baseOrder.city,
+        district: baseOrder.district,
+        street: baseOrder.street,
+        community: baseOrder.community,
+        detailAddress: baseOrder.detailAddress,
+        addressText: baseOrder.addressText,
+        scheduledAt: "2026-06-06 09:00",
+        durationHours: 3,
+        contactPhone: "13800000000",
+        note: "private create order note",
+      },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(createOrderDb.data.orders.length, 1);
+    const createdOrder = createOrderDb.data.orders[0];
+    assert.strictEqual(createdOrder.protectionPlanId, "plan-create");
+    assert.strictEqual(createdOrder.protectionSnapshot.planCode, "trial-create");
+    assert.strictEqual(createdOrder.serviceStandardSnapshot.standardId, "standard-create");
+    assert.strictEqual(createdOrder.serviceStandardSnapshot.title, "Standard for createOrder");
+    assert.strictEqual(createdOrder.afterSaleStatus, "");
+    assert.strictEqual(createdOrder.activeClaimId, "");
+    assert.strictEqual(createdOrder.claimCount, 0);
+    assertNoProtectionPromiseText(createdOrder.protectionSnapshot, "created order protection snapshot");
+  } finally {
+    createOrderContext.restore();
+  }
+
+  const createDb = createPrivacyDB();
+  const customer = await loadFunction({ openid: "customer-a", db: createDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(customer.main, {
+      action: "createProtectionClaim",
+      data: {
+        orderId: "order-a",
+        claimType: "rework",
+        description: "Kitchen corner still needs follow-up. Phone 13800000000 should not enter audit logs.",
+        imageFileIDs: ["cloud://claim-1"],
+        requestedAmount: 0,
+      },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(createDb.data.protectionClaims.length, 1);
+    assert.strictEqual(createDb.data.protectionClaims[0].claimType, "rework");
+    assert.strictEqual(createDb.data.orders[0].afterSaleStatus, "submitted");
+    assert.strictEqual(createDb.data.orders[0].activeClaimId, result.data.claimId);
+    assert.strictEqual(createDb.data.orders[0].claimCount, 1);
+    assertAuditSafe(createDb, "createProtectionClaim");
+  } finally {
+    customer.restore();
+  }
+
+  const stranger = await loadFunction({ openid: "customer-b", db: createPrivacyDB(), env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(stranger.main, {
+      action: "createProtectionClaim",
+      data: { orderId: "order-a", claimType: "refund", description: "I should not access this order" },
+    });
+    expectFailed(result, "FORBIDDEN", null, "stranger createProtectionClaim");
+  } finally {
+    stranger.restore();
+  }
+
+  const invalidDb = createPrivacyDB();
+  const invalid = await loadFunction({ openid: "customer-a", db: invalidDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(invalid.main, { action: "createProtectionClaim", data: { orderId: "order-a", claimType: "bad", description: "invalid" } }),
+      "INVALID_INPUT",
+      null,
+      "invalid claim type"
+    );
+    expectFailed(
+      await invoke(invalid.main, { action: "createProtectionClaim", data: { orderId: "order-a", claimType: "refund", description: "" } }),
+      "INVALID_INPUT",
+      null,
+      "missing claim description"
+    );
+    expectFailed(
+      await invoke(invalid.main, {
+        action: "createProtectionClaim",
+        data: { orderId: "order-a", claimType: "refund", description: "too many images", imageFileIDs: ["1", "2", "3", "4", "5", "6", "7"] },
+      }),
+      "INVALID_INPUT",
+      null,
+      "too many claim images"
+    );
+  } finally {
+    invalid.restore();
+  }
+
+  const claimDb = createPrivacyDB({
+    protectionClaims: [
+      {
+        _id: "claim-a",
+        orderId: "order-a",
+        orderNo: "HJ-001",
+        claimNo: "CLM-001",
+        claimantOpenid: "customer-a",
+        claimantRole: "customer",
+        claimType: "complaint",
+        status: "submitted",
+        description: "Private complaint 13800000000",
+        imageFileIDs: ["cloud://claim-private"],
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+        auditTrail: [{ action: "submitted", actorOpenid: "customer-a", actorRole: "customer", status: "submitted", createdAt: "2026-06-01T00:00:00.000Z" }],
+      },
+      {
+        _id: "claim-b",
+        orderId: "other-order",
+        orderNo: "HJ-002",
+        claimNo: "CLM-002",
+        claimantOpenid: "customer-b",
+        claimantRole: "customer",
+        claimType: "refund",
+        status: "submitted",
+        description: "Other order",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+        auditTrail: [],
+      },
+    ],
+    orders: [
+      seedOrder(),
+      seedOrder({
+        _id: "other-order",
+        customerOpenid: "customer-b",
+        acceptedCleanerOpenid: "cleaner-b",
+        cleanerId: "cleaner-b",
+      }),
+    ],
+  });
+  const claimCustomer = await loadFunction({ openid: "customer-a", db: claimDb, env: { APP_ENV: "production" } });
+  try {
+    const list = await invoke(claimCustomer.main, { action: "listMyProtectionClaims", data: {} });
+    assert.strictEqual(list.success, true);
+    assert.deepStrictEqual(
+      list.data.claims.map((item) => item._id),
+      ["claim-a"]
+    );
+    const detail = await invoke(claimCustomer.main, { action: "getProtectionClaimDetail", data: { claimId: "claim-a" } });
+    assert.strictEqual(detail.success, true);
+    assert.strictEqual(detail.data.claim.description, "Private complaint 13800000000");
+    assertNoSensitiveKeys(detail.data.claim, ["claimantOpenid", "assignedAdminOpenid"], "public protection claim");
+    assert.strictEqual(detail.data.claim.auditTrail[0].actorOpenid, undefined);
+    assert(detail.data.order, "claim detail should include sanitized order");
+  } finally {
+    claimCustomer.restore();
+  }
+
+  const claimCleaner = await loadFunction({ openid: "cleaner-a", db: claimDb, env: { APP_ENV: "production" } });
+  try {
+    const list = await invoke(claimCleaner.main, { action: "listMyProtectionClaims", data: {} });
+    assert.strictEqual(list.success, true);
+    assert.deepStrictEqual(
+      list.data.claims.map((item) => item._id),
+      ["claim-a"]
+    );
+    const detail = await invoke(claimCleaner.main, { action: "getProtectionClaimDetail", data: { claimId: "claim-a" } });
+    assert.strictEqual(detail.success, true);
+    assertNoSensitiveKeys(detail.data.order, ["customerOpenid", "responses"], "claim detail order");
+  } finally {
+    claimCleaner.restore();
+  }
+
+  const claimStranger = await loadFunction({ openid: "cleaner-b", db: claimDb, env: { APP_ENV: "production" } });
+  try {
+    const detail = await invoke(claimStranger.main, { action: "getProtectionClaimDetail", data: { claimId: "claim-a" } });
+    expectFailed(detail, "FORBIDDEN", null, "stranger claim detail");
+  } finally {
+    claimStranger.restore();
+  }
+
+  const adminDb = createPrivacyDB({
+    protectionClaims: [
+      {
+        _id: "claim-admin",
+        orderId: "order-a",
+        claimNo: "CLM-ADMIN",
+        claimantOpenid: "customer-a",
+        claimantRole: "customer",
+        claimType: "refund",
+        status: "submitted",
+        description: "Needs review",
+        auditTrail: [],
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const normalUser = await loadFunction({ openid: "customer-a", db: adminDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(normalUser.main, {
+      action: "updateProtectionClaimStatus",
+      data: { claimId: "claim-admin", status: "under_review" },
+    });
+    expectFailed(result, "FORBIDDEN", null, "non-admin updateProtectionClaimStatus");
+  } finally {
+    normalUser.restore();
+  }
+  const admin = await loadFunction({ openid: "admin-a", db: adminDb, env: { APP_ENV: "production", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const result = await invoke(admin.main, {
+      action: "updateProtectionClaimStatus",
+      data: { claimId: "claim-admin", status: "under_review", resolutionNote: "Manual review only; no refund executed." },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(adminDb.data.protectionClaims[0].status, "under_review");
+    assertAuditSafe(adminDb, "updateProtectionClaimStatus");
+    const invalidTransition = await invoke(admin.main, {
+      action: "updateProtectionClaimStatus",
+      data: { claimId: "claim-admin", status: "submitted" },
+    });
+    expectFailed(invalidTransition, "INVALID_STATUS", null, "invalid claim transition");
+  } finally {
+    admin.restore();
+  }
+
+  const proofDb = createPrivacyDB();
+  const proofCleaner = await loadFunction({ openid: "cleaner-a", db: proofDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(proofCleaner.main, {
+      action: "submitServiceProof",
+      data: { orderId: "order-a", completionPhotoUrls: ["cloud://done-1"], serviceProof: { note: "Completed kitchen and bedroom." } },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(proofDb.data.orders[0].completionPhotoUrls.length, 1);
+    assert.strictEqual(proofDb.data.orders[0].serviceProof.note, "Completed kitchen and bedroom.");
+    assertAuditSafe(proofDb, "submitServiceProof");
+    expectFailed(
+      await invoke(proofCleaner.main, {
+        action: "submitServiceProof",
+        data: { orderId: "order-a", completionPhotoUrls: ["1", "2", "3", "4", "5", "6", "7"] },
+      }),
+      "INVALID_INPUT",
+      null,
+      "too many service proof images"
+    );
+  } finally {
+    proofCleaner.restore();
+  }
+
+  const proofStranger = await loadFunction({ openid: "cleaner-b", db: createPrivacyDB(), env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(proofStranger.main, {
+      action: "submitServiceProof",
+      data: { orderId: "order-a", completionPhotoUrls: ["cloud://done-1"] },
+    });
+    expectFailed(result, "FORBIDDEN", null, "stranger submitServiceProof");
+  } finally {
+    proofStranger.restore();
+  }
+
+  const assignedDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "assigned-order",
+        publishMode: "assigned",
+        status: "assigned_waiting_accept",
+        acceptedCleanerOpenid: "",
+        assignedCleanerOpenid: "cleaner-a",
+        cleanerId: "cleaner-a",
+      }),
+    ],
+  });
+  const assignedCleaner = await loadFunction({ openid: "cleaner-a", db: assignedDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(assignedCleaner.main, {
+      action: "reportCleanerException",
+      data: { orderId: "assigned-order", description: "Customer requested a schedule change.", imageFileIDs: ["cloud://exception-1"] },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(assignedDb.data.protectionClaims[0].claimType, "cleaner_exception");
+    assertAuditSafe(assignedDb, "reportCleanerException");
+  } finally {
+    assignedCleaner.restore();
+  }
+
+  const exceptionStranger = await loadFunction({ openid: "cleaner-b", db: assignedDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(exceptionStranger.main, {
+      action: "reportCleanerException",
+      data: { orderId: "assigned-order", description: "I should not report this" },
+    });
+    expectFailed(result, "FORBIDDEN", null, "stranger reportCleanerException");
+  } finally {
+    exceptionStranger.restore();
+  }
+}
+
 function listRegisteredPages() {
   const appJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../../miniprogram/app.json"), "utf8"));
   return appJson.pages || [];
@@ -885,6 +1287,11 @@ function runStaticMiniprogramTests() {
     "pages/legal/service-guarantee/index",
     "pages/legal/refund-cancellation/index",
     "pages/legal/account-deletion/index",
+    "pages/protection/index",
+    "pages/service-standard/index",
+    "pages/claim-create/index",
+    "pages/claim-detail/index",
+    "pages/claim-list/index",
   ];
   requiredPages.forEach((page) => assert(pages.includes(page), `${page} should be registered`));
 
@@ -902,12 +1309,22 @@ function runStaticMiniprogramTests() {
   assert.deepStrictEqual(cleanerOpenidUses, ["miniprogram/utils/cleaner-id.js"], "cleaner._openid should only remain in cleanerOpenidOf helper");
   const orderCreateText = fs.readFileSync(path.join(root, "miniprogram/pages/order-create/index.js"), "utf8");
   const orderDetailText = fs.readFileSync(path.join(root, "miniprogram/pages/order-detail/index.js"), "utf8");
+  const orderDetailWxml = fs.readFileSync(path.join(root, "miniprogram/pages/order-detail/index.wxml"), "utf8");
+  const profileText = fs.readFileSync(path.join(root, "miniprogram/pages/profile/index.js"), "utf8");
   const formatText = fs.readFileSync(path.join(root, "miniprogram/utils/format.js"), "utf8");
   const cloudIndexText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/index.js"), "utf8");
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
+  assert(orderDetailText.includes("openClaimCreate"), "order-detail should include claim create entry");
+  assert(orderDetailText.includes("openExceptionReport"), "order-detail should include cleaner exception entry");
+  assert(/canAfterSale:\s*isCustomer\s*\|\|\s*isAcceptedCleaner/.test(orderDetailText), "order-detail should only expose general after-sales to customer or accepted cleaner");
+  assert(!/canAfterSale:\s*isCustomer\s*\|\|\s*isAcceptedCleaner\s*\|\|\s*isAssignedCleaner/.test(orderDetailText), "assigned cleaner should use exception report, not general after-sales");
+  assert(orderDetailWxml.includes("openClaimCreate"), "order-detail wxml should expose after-sales entry");
+  assert(orderDetailWxml.includes("openExceptionReport"), "order-detail wxml should expose cleaner exception entry");
+  assert(profileText.includes("openAfterSales"), "profile should include after-sales list entry");
   assert(/Boolean\(order\.myResponse\)|order\.myResponse/.test(orderDetailText), "order-detail should include order.myResponse in hasResponse");
   assert(/responseCount:\s*Number\(order\.responseCount\s*\?\?/.test(formatText), "decorateOrder should preserve backend responseCount");
+  assert(formatText.includes("afterSaleStatusText"), "decorateOrder should expose afterSaleStatusText");
   assert(
     !/function decorateReviewForDisplay[\s\S]*?return\s*{\s*\.\.\.review/.test(cloudIndexText),
     "decorateReviewForDisplay should not spread raw review fields"
@@ -955,6 +1372,7 @@ runProductionGateTests()
   .then(runCleanerPrivacyTests)
   .then(runAuditLogTests)
   .then(runSupportTicketTests)
+  .then(runProtectionWorkflowTests)
   .then(runStaticMiniprogramTests)
   .then(() => {
     console.log("action tests passed");

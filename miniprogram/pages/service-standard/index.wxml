@@ -1,0 +1,15 @@
+<view class="page">
+  <view class="section-title">服务标准</view>
+  <view wx:if="{{loading}}" class="empty">加载中...</view>
+  <view wx:for="{{standards}}" wx:key="_id" class="card">
+    <view class="title">{{item.title}}</view>
+    <view class="meta">适用服务：{{item.serviceType}}</view>
+    <view class="sub-title">包含项目</view>
+    <view wx:for="{{item.includedItems}}" wx:key="*this" wx:for-item="included" class="line">- {{included}}</view>
+    <view class="sub-title">不包含项目</view>
+    <view wx:for="{{item.excludedItems}}" wx:key="*this" wx:for-item="excluded" class="line">- {{excluded}}</view>
+    <view class="sub-title">住户提示</view>
+    <view wx:for="{{item.customerTips}}" wx:key="*this" wx:for-item="tip" class="line">- {{tip}}</view>
+  </view>
+  <view wx:if="{{!loading && !standards.length}}" class="empty">暂无匹配服务标准。</view>
+</view>

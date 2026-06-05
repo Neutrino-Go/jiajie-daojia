@@ -1,0 +1,15 @@
+<view class="page">
+  <view class="section-title">服务保障</view>
+  <view class="notice">保障范围以实际保险合同和平台规则为准。当前支付能力待接入，退款/补偿需由平台人工确认处理。</view>
+  <view wx:if="{{loading}}" class="empty">加载中...</view>
+  <view wx:for="{{plans}}" wx:key="_id" class="card">
+    <view class="title">{{item.title}}</view>
+    <view class="summary">{{item.summary}}</view>
+    <view class="sub-title">包含内容</view>
+    <view wx:for="{{item.coverageItems}}" wx:key="*this" wx:for-item="coverage" class="line">- {{coverage}}</view>
+    <view class="sub-title">限制说明</view>
+    <view wx:for="{{item.limitations}}" wx:key="*this" wx:for-item="limit" class="line">- {{limit}}</view>
+    <view class="meta">售后窗口：{{item.afterSaleWindowHours}} 小时</view>
+    <view class="meta">{{item.insuranceStatusText}}</view>
+  </view>
+</view>

@@ -78,6 +78,8 @@ Page({
     canSaveCleaner: false,
     canRepublish: false,
     canReassign: false,
+    canAfterSale: false,
+    canReportException: false,
     starItems: starItems(0),
     ratingHint: "请选择评分",
     ratingValueText: "",
@@ -226,6 +228,8 @@ Page({
         cleanerSaved: Boolean(data.savedCleaner),
         canRepublish: isDeclinedAssigned,
         canReassign: isDeclinedAssigned,
+        canAfterSale: isCustomer || isAcceptedCleaner,
+        canReportException: isCleanerView && (isAcceptedCleaner || isAssignedCleaner),
         starItems: starItems(nextRating),
         ratingHint: ratingText(nextRating),
         ratingValueText: ratingValueText(nextRating),
@@ -288,6 +292,27 @@ Page({
     wx.navigateTo({ url: `/pages/support/index?orderId=${this.data.id}` });
   },
 
+  openProtection() {
+    wx.navigateTo({ url: "/pages/protection/index" });
+  },
+
+  openServiceStandard() {
+    const serviceType = encodeURIComponent((this.data.order && this.data.order.serviceType) || "");
+    wx.navigateTo({ url: `/pages/service-standard/index?serviceType=${serviceType}` });
+  },
+
+  openClaimCreate() {
+    wx.navigateTo({ url: `/pages/claim-create/index?orderId=${this.data.id}&type=complaint` });
+  },
+
+  openExceptionReport() {
+    wx.navigateTo({ url: `/pages/claim-create/index?orderId=${this.data.id}&type=cleaner_exception` });
+  },
+
+  openClaimList() {
+    wx.navigateTo({ url: `/pages/claim-list/index?orderId=${this.data.id}` });
+  },
+
   async completeOrder() {
     if (this.data.completionSubmitting) return;
     const imageUrls = uploadedImageUrls(this.data.completionForm.images || []);
@@ -296,6 +321,17 @@ Page({
       return;
     }
     this.setData({ completionSubmitting: true });
+    try {
+      await callCloud("submitServiceProof", {
+        orderId: this.data.id,
+        completionPhotoUrls: imageUrls,
+        serviceProof: { note: "" },
+      });
+    } catch (error) {
+      this.setData({ completionSubmitting: false });
+      showError(error);
+      return;
+    }
     await this.mutate(
       "updateOrderStatus",
       {

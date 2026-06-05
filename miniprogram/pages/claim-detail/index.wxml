@@ -1,0 +1,15 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="empty">加载中...</view>
+  <view wx:if="{{claim}}" class="card">
+    <view class="title">{{claim.claimNo}}</view>
+    <view class="meta">类型：{{claim.claimType}}</view>
+    <view class="meta">状态：{{claim.status}}</view>
+    <view class="desc">{{claim.description}}</view>
+    <view wx:if="{{claim.resolutionNote}}" class="notice">{{claim.resolutionNote}}</view>
+  </view>
+  <view wx:if="{{order}}" class="card">
+    <view class="title">关联订单</view>
+    <view class="meta">{{order.serviceType}} · {{order.statusText}}</view>
+    <view class="meta">{{order.displayAddress}}</view>
+  </view>
+</view>

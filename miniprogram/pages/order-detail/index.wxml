@@ -61,6 +61,20 @@
   </view>
 
   <view class="card section">
+    <view class="panel-title">服务保障</view>
+    <view class="meta">{{order.protectionSnapshot.summary || '不满意可提交售后申请，平台将在试运营规则下协助处理。'}}</view>
+    <view class="meta">保障范围以实际保险合同和平台规则为准。</view>
+    <view class="meta" wx:if="{{order.afterSaleStatusText}}">{{order.afterSaleStatusText}}</view>
+    <view class="support-actions">
+      <button class="btn btn-secondary support-btn" bindtap="openProtection">保障规则</button>
+      <button class="btn btn-secondary support-btn" bindtap="openServiceStandard">服务标准</button>
+      <button wx:if="{{canAfterSale}}" class="btn btn-secondary support-btn" bindtap="openClaimCreate">申请售后</button>
+      <button wx:if="{{canReportException}}" class="btn btn-secondary support-btn" bindtap="openExceptionReport">异常报备</button>
+      <button wx:if="{{canAfterSale}}" class="btn btn-secondary support-btn" bindtap="openClaimList">售后记录</button>
+    </view>
+  </view>
+
+  <view class="card section">
     <view class="panel-title">联系方式</view>
     <view wx:if="{{hasContact}}">
       <view class="contact">

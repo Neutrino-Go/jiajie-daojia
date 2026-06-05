@@ -1,0 +1,25 @@
+<view class="page">
+  <view class="section-title">售后/异常申请</view>
+  <view class="notice">{{refundNotice}}</view>
+  <view class="form-card">
+    <view class="field">
+      <view class="label">问题类型</view>
+      <picker range="{{claimLabels}}" value="{{typeIndex}}" bindchange="onTypeChange">
+        <view class="picker">{{claimLabels[typeIndex]}}</view>
+      </picker>
+    </view>
+    <view class="field">
+      <view class="label">问题描述</view>
+      <textarea class="textarea" maxlength="1000" value="{{description}}" data-field="description" bindinput="onInput" placeholder="请描述返工、退款、投诉、财损或异常情况"></textarea>
+    </view>
+    <view class="field">
+      <view class="label">申请金额（可选）</view>
+      <input class="input" type="digit" value="{{requestedAmount}}" data-field="requestedAmount" bindinput="onInput" placeholder="仅用于平台人工确认" />
+    </view>
+    <view class="field">
+      <view class="label">图片 fileID（可选，最多 6 个）</view>
+      <textarea class="textarea small" value="{{imageFileIDsText}}" data-field="imageFileIDsText" bindinput="onInput" placeholder="如已上传图片，可粘贴 fileID；本页不假装上传成功"></textarea>
+    </view>
+    <button class="primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">提交</button>
+  </view>
+</view>

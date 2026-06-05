@@ -527,6 +527,17 @@ function decorateOrderDistance(order, cleanerLocation) {
   };
 }
 
+function afterSaleStatusText(status) {
+  const value = String(status || "");
+  if (!value) return "";
+  if (value === "submitted") return "已提交反馈";
+  if (value === "under_review" || value === "needs_more_info") return "售后处理中";
+  if (value === "resolved") return "售后已处理";
+  if (value === "rejected") return "售后未通过";
+  if (value === "cancelled") return "售后已取消";
+  return "售后处理中";
+}
+
 function decorateOrder(order, openid, role = "", referenceLocation = null) {
   const isCustomer = order.customerOpenid === openid;
   const isCleaner = order.acceptedCleanerOpenid === openid || order.assignedCleanerOpenid === openid;
@@ -537,6 +548,7 @@ function decorateOrder(order, openid, role = "", referenceLocation = null) {
   const platformFee = Number(order.platformFee || commission.platformFee);
   const cleanerIncome = Number(order.cleanerIncome || commission.cleanerIncome);
   const paymentStatus = normalizePaymentStatus({ ...order, status: displayStatus });
+  const afterSaleText = afterSaleStatusText(order.afterSaleStatus);
   const distanceFields = orderDistanceFields(order, referenceLocation);
   const locationText = [distanceFields.orderLocation.city, distanceFields.orderLocation.district].filter(Boolean).join(" ");
   const statusCopy = getOrderStatusCopy(displayStatus, viewerRole);
@@ -603,6 +615,7 @@ function decorateOrder(order, openid, role = "", referenceLocation = null) {
     reviewedText: reviewBadgeText,
     reviewStatusText: reviewBadgeText,
     reviewBadgeText,
+    afterSaleStatusText: afterSaleText,
     canManage: ["completed", "auto_completed", "cancelled"].includes(displayStatus),
     displayOrderNo: shortOrderNo(order),
   };

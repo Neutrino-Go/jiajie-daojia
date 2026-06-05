@@ -117,3 +117,32 @@
 - 再统一报价和补贴财务字段，避免真实支付后反复迁移账务模型。
 - 再补家洁师准入和部署权限，保证试运营流量可控。
 - 最后接入真实支付、退款和结算，避免资金风险先于规则上线。
+
+## v0.2.2 implementation update
+
+目标：建立订单保障、服务标准、售后工单、返工/退款申请、财损/异常报备和服务完成证明的最小闭环。
+
+本次范围：
+
+- 新增 `serviceStandards`、`protectionPlans`、`protectionClaims` 最小数据模型。
+- 新订单写入 `protectionSnapshot` 和 `serviceStandardSnapshot`，配置缺失时使用安全默认快照。
+- 新增 `getServiceStandards`、`getProtectionPlans`、`createProtectionClaim`、`listMyProtectionClaims`、`getProtectionClaimDetail`、`updateProtectionClaimStatus`、`submitServiceProof`、`reportCleanerException`。
+- 新增保障规则、服务标准、售后创建、售后列表、售后详情页面。
+- Profile 和订单详情增加售后与异常报备入口。
+- 订单卡片仅展示简短售后状态，避免改变订单主状态机。
+
+明确不做：
+
+- 不接入真实微信支付。
+- 不执行真实退款、赔付、打款或保险理赔。
+- 不大改订单主状态机。
+- 不大改定价引擎。
+- 不恢复 mockPayOrder 前端入口。
+- 不使用“百万保障”“全额赔付”“已投保”等未经验证文案。
+
+仍需上线前完成：
+
+- 微信开发者工具真实编译和人工测试，本轮仍记录为待执行。
+- CloudBase 生产数据库规则、云函数部署权限和环境变量复核。
+- 真实微信支付、退款、结算接入。
+- 完整后台客服/理赔处理台。

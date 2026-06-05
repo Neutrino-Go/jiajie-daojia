@@ -25,11 +25,15 @@
       </text>
     </view>
 
-    <view wx:if="{{order.reviewBadgeText || order.nonLocalText || order.distanceDisplayText}}" class="order-extra-row">
+    <view wx:if="{{order.reviewBadgeText || order.afterSaleStatusText || order.nonLocalText || order.distanceDisplayText}}" class="order-extra-row">
       <view class="order-extra-spacer"></view>
       <view class="order-extra-group">
         <text wx:if="{{order.reviewBadgeText}}" class="order-review-status">
           {{order.reviewBadgeText}}
+        </text>
+
+        <text wx:if="{{order.afterSaleStatusText}}" class="order-review-status">
+          {{order.afterSaleStatusText}}
         </text>
 
         <text wx:if="{{order.nonLocalText}}" class="order-nonlocal-status">
