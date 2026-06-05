@@ -47,6 +47,7 @@ const COLLECTIONS = [
 
 const COMMISSION_RATE = 0.05;
 const CONTACT_STATUSES = ["confirmed", "in_service", "waiting_complete", "waiting_acceptance", "completed", "auto_completed", "accepted"];
+const SERVICE_PROOF_STATUSES = ["in_service", "waiting_complete", "waiting_acceptance"];
 const CLAIM_TYPES = ["rework", "refund", "complaint", "property_damage", "cleaner_exception", "safety_risk", "other"];
 const CLAIM_STATUSES = ["submitted", "under_review", "needs_more_info", "resolved", "rejected", "cancelled"];
 const CLAIM_STATUS_TRANSITIONS = {
@@ -77,6 +78,39 @@ const DEFAULT_SERVICE_STANDARDS = [
     excludedItems: ["高空作业", "家电深度拆机", "危险污染物处理"],
     customerTips: ["请提前说明重点需求", "现场超出范围项目需双方确认"],
     cleanerTips: ["服务前拍照确认重点区域", "异常情况及时报备"],
+    version: "2026-06",
+    enabled: true,
+  },
+  {
+    _id: "standard-move-in-cleaning-v1",
+    serviceType: "开荒保洁",
+    title: "开荒保洁服务标准",
+    includedItems: ["地面清洁", "可触达台面擦拭", "厨卫基础清洁", "装修后浮尘清洁"],
+    excludedItems: ["高空作业", "危险物品处理", "装修垃圾清运", "订单未约定的额外工作"],
+    customerTips: ["请提前说明面积和重点区域", "超出订单范围的服务需双方确认"],
+    cleanerTips: ["服务前确认范围", "异常情况及时报备"],
+    version: "2026-06",
+    enabled: true,
+  },
+  {
+    _id: "standard-housework-organize-v1",
+    serviceType: "家务整理",
+    title: "家务整理服务标准",
+    includedItems: ["按订单约定整理物品", "基础归类", "可触达区域整理"],
+    excludedItems: ["贵重物品处置", "危险物品处理", "订单未约定的额外工作"],
+    customerTips: ["请提前说明整理范围", "贵重物品请自行保管"],
+    cleanerTips: ["服务前确认范围", "涉及私人物品时先征得客户确认"],
+    version: "2026-06",
+    enabled: true,
+  },
+  {
+    _id: "standard-storage-organize-v1",
+    serviceType: "收纳整理",
+    title: "收纳整理服务标准",
+    includedItems: ["按订单约定收纳整理", "基础分类", "收纳建议"],
+    excludedItems: ["贵重物品处置", "危险物品处理", "订单未约定的额外工作"],
+    customerTips: ["请提前说明重点空间", "贵重物品请自行保管"],
+    cleanerTips: ["服务前确认范围", "涉及私人物品时先征得客户确认"],
     version: "2026-06",
     enabled: true,
   },
@@ -473,6 +507,12 @@ function canViewOrderParticipantIds(order, viewerOpenid, context = {}) {
   );
 }
 
+function canViewOrderAfterSalePrivateFields(order, viewerOpenid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order) return false;
+  return order.customerOpenid === viewerOpenid || order.acceptedCleanerOpenid === viewerOpenid;
+}
+
 function visibleContact(order, openid, context = {}) {
   return canViewCustomerContact(order, openid, context);
 }
@@ -527,6 +567,17 @@ function publicOrderForViewer(order, openid, context = {}) {
     delete next.acceptedCleanerOpenid;
     delete next.assignedCleanerOpenid;
     delete next.cleanerId;
+  }
+  if (!canViewOrderAfterSalePrivateFields(order, openid, context)) {
+    delete next.activeClaimId;
+    delete next.lastClaimAt;
+    delete next.serviceProof;
+    delete next.beforePhotoUrls;
+    delete next.completionPhotoUrls;
+    delete next.completionImageUrls;
+    delete next.completionPhotos;
+    next.afterSaleStatus = "";
+    next.claimCount = 0;
   }
   delete next.customerOpenid;
   delete next.responses;
@@ -602,6 +653,21 @@ function protectionPlanSnapshot(plan = {}) {
   };
 }
 
+function fallbackServiceStandard(serviceType = "保洁服务") {
+  const type = String(serviceType || "保洁服务").trim() || "保洁服务";
+  return {
+    _id: "",
+    serviceType: type,
+    title: `${type}服务标准`,
+    includedItems: ["按订单约定范围提供服务"],
+    excludedItems: ["高空作业", "危险物品处理", "订单未约定的额外工作"],
+    customerTips: ["请提前说明重点需求", "超出订单范围的服务需双方确认"],
+    cleanerTips: ["服务前确认范围", "异常情况及时报备"],
+    version: "2026-06",
+    enabled: true,
+  };
+}
+
 async function enabledServiceStandards() {
   const result = await db.collection("serviceStandards").where({ enabled: true }).limit(100).get().catch(() => ({ data: [] }));
   const standards = result.data && result.data.length ? result.data : DEFAULT_SERVICE_STANDARDS;
@@ -616,7 +682,7 @@ async function enabledProtectionPlans() {
 
 async function getDefaultServiceStandard(serviceType) {
   const standards = await enabledServiceStandards();
-  return standards.find((item) => item.serviceType === serviceType) || standards[0] || DEFAULT_SERVICE_STANDARDS[0];
+  return standards.find((item) => item.serviceType === serviceType) || fallbackServiceStandard(serviceType);
 }
 
 async function getDefaultProtectionPlan() {
@@ -1594,9 +1660,9 @@ async function getPlatformStats() {
 }
 
 async function getServiceStandards(data = {}) {
-  const standards = (await enabledServiceStandards())
-    .filter((item) => !data.serviceType || item.serviceType === data.serviceType)
-    .map(publicServiceStandard);
+  const enabled = await enabledServiceStandards();
+  const matched = enabled.filter((item) => !data.serviceType || item.serviceType === data.serviceType);
+  const standards = (matched.length ? matched : data.serviceType ? [fallbackServiceStandard(data.serviceType)] : enabled).map(publicServiceStandard);
   return ok({ standards });
 }
 
@@ -2962,7 +3028,7 @@ function canViewProtectionClaim(claim, order, openid, context = {}) {
   if (!claim) return false;
   if (claim.claimantOpenid === openid) return true;
   if (!order) return false;
-  return order.customerOpenid === openid || order.acceptedCleanerOpenid === openid || order.assignedCleanerOpenid === openid;
+  return order.customerOpenid === openid || order.acceptedCleanerOpenid === openid;
 }
 
 function canReportCleanerException(order, openid, context = {}) {
@@ -3179,10 +3245,16 @@ async function updateProtectionClaimStatus(data = {}) {
     },
   });
   if (claim.orderId) {
+    const order = await getOrder(claim.orderId).catch(() => null);
+    const nextActiveClaimId = terminal
+      ? order && order.activeClaimId === claim._id
+        ? ""
+        : (order && order.activeClaimId) || ""
+      : claim._id;
     await db.collection("orders").doc(claim.orderId).update({
       data: {
         afterSaleStatus: nextStatus,
-        activeClaimId: terminal ? "" : claim._id,
+        activeClaimId: nextActiveClaimId,
         updatedAt,
       },
     });
@@ -3208,7 +3280,7 @@ async function submitServiceProof(data = {}) {
   if (order.acceptedCleanerOpenid !== openid) {
     throw AppError("无权提交该订单服务证明", "FORBIDDEN");
   }
-  if (!CONTACT_STATUSES.includes(order.status)) {
+  if (!SERVICE_PROOF_STATUSES.includes(order.status)) {
     throw AppError("当前订单暂不能提交服务证明", "INVALID_STATUS");
   }
   const completionPhotoUrls = normalizeClaimImages(data.completionPhotoUrls || data.completionImageUrls || data.serviceProofImageUrls || []);

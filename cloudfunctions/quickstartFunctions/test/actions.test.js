@@ -253,6 +253,16 @@ function assertPublicOrderSafe(order, name) {
   assert(!Array.isArray(order.responses), `${name} should not expose full responses`);
 }
 
+function assertNoAfterSalePrivateFields(order, name) {
+  assertNoSensitiveKeys(
+    order,
+    ["activeClaimId", "lastClaimAt", "serviceProof", "beforePhotoUrls", "completionPhotoUrls", "completionImageUrls", "completionPhotos"],
+    name
+  );
+  assert(order.afterSaleStatus === undefined || order.afterSaleStatus === "", `${name} should not expose afterSaleStatus`);
+  assert(order.claimCount === undefined || Number(order.claimCount || 0) === 0, `${name} should not expose claimCount`);
+}
+
 function seedUser(openid, role) {
   return { _id: `user-${openid}`, _openid: openid, role, currentRole: role, roles: [role] };
 }
@@ -932,6 +942,23 @@ async function runProtectionWorkflowTests() {
     configContext.restore();
   }
 
+  const moveInServiceType = "\u5f00\u8352\u4fdd\u6d01";
+  const organizeServiceType = "\u5bb6\u52a1\u6574\u7406";
+  const fallbackStandardsDb = createPrivacyDB({ serviceStandards: [] });
+  const fallbackStandardsContext = await loadFunction({ openid: "customer-a", db: fallbackStandardsDb, env: { APP_ENV: "production" } });
+  try {
+    for (const serviceType of [moveInServiceType, organizeServiceType]) {
+      const result = await invoke(fallbackStandardsContext.main, { action: "getServiceStandards", data: { serviceType } });
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.data.standards.length, 1);
+      assert.strictEqual(result.data.standards[0].serviceType, serviceType);
+      assert(result.data.standards[0].title.includes(serviceType), `${serviceType} fallback title should match serviceType`);
+      assertNoProtectionPromiseText(result.data.standards[0], `${serviceType} fallback standard`);
+    }
+  } finally {
+    fallbackStandardsContext.restore();
+  }
+
   const baseOrder = seedOrder();
   const createOrderDb = createPrivacyDB({
     orders: [],
@@ -1000,6 +1027,111 @@ async function runProtectionWorkflowTests() {
     assertNoProtectionPromiseText(createdOrder.protectionSnapshot, "created order protection snapshot");
   } finally {
     createOrderContext.restore();
+  }
+
+  const fallbackCreateDb = createPrivacyDB({ orders: [], serviceStandards: [] });
+  const fallbackCreateContext = await loadFunction({ openid: "customer-a", db: fallbackCreateDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(fallbackCreateContext.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: moveInServiceType,
+        city: baseOrder.city,
+        district: baseOrder.district,
+        street: baseOrder.street,
+        community: baseOrder.community,
+        detailAddress: baseOrder.detailAddress,
+        addressText: baseOrder.addressText,
+        areaSize: 80,
+        scheduledAt: "2026-06-06 09:00",
+        durationHours: 3,
+        contactPhone: "13800000000",
+      },
+    });
+    assert.strictEqual(result.success, true);
+    assert(fallbackCreateDb.data.orders[0].serviceStandardSnapshot.title.includes(moveInServiceType), "createOrder fallback standard should match serviceType");
+    assert(!fallbackCreateDb.data.orders[0].serviceStandardSnapshot.title.includes(baseOrder.serviceType), "createOrder fallback should not reuse daily standard");
+  } finally {
+    fallbackCreateContext.restore();
+  }
+
+  const afterSaleOrder = seedOrder({
+    _id: "order-after-sale-private",
+    status: "waiting_confirm",
+    acceptedCleanerOpenid: "cleaner-a",
+    cleanerId: "cleaner-a",
+    responses: [
+      { cleanerId: "cleaner-a", status: "selected" },
+      { cleanerId: "cleaner-b", status: "submitted" },
+    ],
+    afterSaleStatus: "submitted",
+    activeClaimId: "claim-private",
+    claimCount: 2,
+    lastClaimAt: "2026-06-02T00:00:00.000Z",
+    serviceProof: { note: "private proof", submittedBy: "cleaner-a" },
+    beforePhotoUrls: ["cloud://before-private"],
+    completionPhotoUrls: ["cloud://complete-private"],
+    completionImageUrls: ["cloud://complete-private"],
+    completionPhotos: [{ fileID: "cloud://complete-private" }],
+  });
+  const afterSalePrivacyDb = createPrivacyDB({ orders: [afterSaleOrder] });
+  const unselectedCleaner = await loadFunction({ openid: "cleaner-b", db: afterSalePrivacyDb, env: { APP_ENV: "production" } });
+  try {
+    const detail = await invoke(unselectedCleaner.main, { action: "getOrderDetail", data: { orderId: "order-after-sale-private" } });
+    assert.strictEqual(detail.success, true);
+    assertNoAfterSalePrivateFields(detail.data.order, "unselected cleaner order detail");
+    assertPublicOrderSafe(detail.data.order, "unselected cleaner order detail");
+  } finally {
+    unselectedCleaner.restore();
+  }
+  const unopenedOrderDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        ...afterSaleOrder,
+        _id: "order-open-after-sale-private",
+        status: "waiting_response",
+        acceptedCleanerOpenid: "",
+        cleanerId: "",
+        responses: [],
+      }),
+    ],
+  });
+  const unopenedCleaner = await loadFunction({ openid: "cleaner-b", db: unopenedOrderDb, env: { APP_ENV: "production" } });
+  try {
+    const list = await invoke(unopenedCleaner.main, { action: "listOpenOrders", data: { scope: "all" } });
+    assert.strictEqual(list.success, true);
+    assert(list.data.length >= 1, "listOpenOrders should return public order");
+    assertNoAfterSalePrivateFields(list.data[0], "unresponded cleaner listOpenOrders");
+    assertPublicOrderSafe(list.data[0], "unresponded cleaner listOpenOrders");
+    const detail = await invoke(unopenedCleaner.main, { action: "getOrderDetail", data: { orderId: "order-open-after-sale-private" } });
+    assert.strictEqual(detail.success, true);
+    assertNoAfterSalePrivateFields(detail.data.order, "unresponded cleaner order detail");
+  } finally {
+    unopenedCleaner.restore();
+  }
+  const afterSaleCustomer = await loadFunction({ openid: "customer-a", db: createPrivacyDB({ orders: [afterSaleOrder] }), env: { APP_ENV: "production" } });
+  try {
+    const detail = await invoke(afterSaleCustomer.main, { action: "getOrderDetail", data: { orderId: "order-after-sale-private" } });
+    assert.strictEqual(detail.success, true);
+    assert.strictEqual(detail.data.order.serviceProof.note, "private proof");
+    assert.strictEqual(detail.data.order.completionPhotoUrls[0], "cloud://complete-private");
+    assert.strictEqual(detail.data.order.afterSaleStatus, "submitted");
+  } finally {
+    afterSaleCustomer.restore();
+  }
+  const afterSaleAcceptedCleaner = await loadFunction({
+    openid: "cleaner-a",
+    db: createPrivacyDB({ orders: [seedOrder({ ...afterSaleOrder, status: "confirmed" })] }),
+    env: { APP_ENV: "production" },
+  });
+  try {
+    const detail = await invoke(afterSaleAcceptedCleaner.main, { action: "getOrderDetail", data: { orderId: "order-after-sale-private" } });
+    assert.strictEqual(detail.success, true);
+    assert.strictEqual(detail.data.order.serviceProof.note, "private proof");
+    assert.strictEqual(detail.data.order.completionPhotoUrls[0], "cloud://complete-private");
+  } finally {
+    afterSaleAcceptedCleaner.restore();
   }
 
   const createDb = createPrivacyDB();
@@ -1148,6 +1280,63 @@ async function runProtectionWorkflowTests() {
     claimStranger.restore();
   }
 
+  const assignedClaimDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "assigned-claim-order",
+        publishMode: "assigned",
+        status: "assigned_waiting_accept",
+        acceptedCleanerOpenid: "",
+        assignedCleanerOpenid: "cleaner-a",
+        cleanerId: "cleaner-a",
+      }),
+    ],
+    protectionClaims: [
+      {
+        _id: "claim-customer-assigned",
+        orderId: "assigned-claim-order",
+        claimNo: "CLM-ASSIGNED-CUSTOMER",
+        claimantOpenid: "customer-a",
+        claimantRole: "customer",
+        claimType: "complaint",
+        status: "submitted",
+        description: "customer private complaint",
+        imageFileIDs: ["cloud://customer-claim-private"],
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+        auditTrail: [],
+      },
+      {
+        _id: "claim-assigned-cleaner",
+        orderId: "assigned-claim-order",
+        claimNo: "CLM-ASSIGNED-CLEANER",
+        claimantOpenid: "cleaner-a",
+        claimantRole: "cleaner",
+        claimType: "cleaner_exception",
+        status: "submitted",
+        description: "assigned cleaner own exception",
+        imageFileIDs: ["cloud://cleaner-exception"],
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+        auditTrail: [],
+      },
+    ],
+  });
+  const assignedViewer = await loadFunction({ openid: "cleaner-a", db: assignedClaimDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(assignedViewer.main, { action: "getProtectionClaimDetail", data: { claimId: "claim-customer-assigned" } }),
+      "FORBIDDEN",
+      null,
+      "assigned cleaner should not view customer claim"
+    );
+    const ownClaim = await invoke(assignedViewer.main, { action: "getProtectionClaimDetail", data: { claimId: "claim-assigned-cleaner" } });
+    assert.strictEqual(ownClaim.success, true);
+    assert.strictEqual(ownClaim.data.claim._id, "claim-assigned-cleaner");
+  } finally {
+    assignedViewer.restore();
+  }
+
   const adminDb = createPrivacyDB({
     protectionClaims: [
       {
@@ -1193,7 +1382,74 @@ async function runProtectionWorkflowTests() {
     admin.restore();
   }
 
-  const proofDb = createPrivacyDB();
+  const activeClaimClearDb = createPrivacyDB({
+    orders: [seedOrder({ activeClaimId: "claim-active-a", afterSaleStatus: "under_review" })],
+    protectionClaims: [
+      {
+        _id: "claim-active-a",
+        orderId: "order-a",
+        claimNo: "CLM-ACTIVE-A",
+        claimantOpenid: "customer-a",
+        claimantRole: "customer",
+        claimType: "complaint",
+        status: "under_review",
+        description: "active claim a",
+        auditTrail: [],
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const activeClaimClearAdmin = await loadFunction({ openid: "admin-a", db: activeClaimClearDb, env: { APP_ENV: "production", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const result = await invoke(activeClaimClearAdmin.main, { action: "updateProtectionClaimStatus", data: { claimId: "claim-active-a", status: "resolved" } });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(activeClaimClearDb.data.orders[0].activeClaimId, "");
+  } finally {
+    activeClaimClearAdmin.restore();
+  }
+
+  const activeClaimKeepDb = createPrivacyDB({
+    orders: [seedOrder({ activeClaimId: "claim-active-b", afterSaleStatus: "under_review" })],
+    protectionClaims: [
+      {
+        _id: "claim-active-a",
+        orderId: "order-a",
+        claimNo: "CLM-ACTIVE-A",
+        claimantOpenid: "customer-a",
+        claimantRole: "customer",
+        claimType: "complaint",
+        status: "under_review",
+        description: "active claim a",
+        auditTrail: [],
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+      {
+        _id: "claim-active-b",
+        orderId: "order-a",
+        claimNo: "CLM-ACTIVE-B",
+        claimantOpenid: "customer-a",
+        claimantRole: "customer",
+        claimType: "refund",
+        status: "under_review",
+        description: "active claim b",
+        auditTrail: [],
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const activeClaimKeepAdmin = await loadFunction({ openid: "admin-a", db: activeClaimKeepDb, env: { APP_ENV: "production", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const result = await invoke(activeClaimKeepAdmin.main, { action: "updateProtectionClaimStatus", data: { claimId: "claim-active-a", status: "resolved" } });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(activeClaimKeepDb.data.orders[0].activeClaimId, "claim-active-b");
+  } finally {
+    activeClaimKeepAdmin.restore();
+  }
+
+  const proofDb = createPrivacyDB({ orders: [seedOrder({ status: "in_service" })] });
   const proofCleaner = await loadFunction({ openid: "cleaner-a", db: proofDb, env: { APP_ENV: "production" } });
   try {
     const result = await invoke(proofCleaner.main, {
@@ -1215,6 +1471,34 @@ async function runProtectionWorkflowTests() {
     );
   } finally {
     proofCleaner.restore();
+  }
+
+  for (const status of ["waiting_complete", "waiting_acceptance"]) {
+    const db = createPrivacyDB({ orders: [seedOrder({ status })] });
+    const context = await loadFunction({ openid: "cleaner-a", db, env: { APP_ENV: "production" } });
+    try {
+      const result = await invoke(context.main, {
+        action: "submitServiceProof",
+        data: { orderId: "order-a", completionPhotoUrls: ["cloud://done-1"] },
+      });
+      assert.strictEqual(result.success, true, `${status} submitServiceProof should succeed`);
+    } finally {
+      context.restore();
+    }
+  }
+
+  for (const status of ["completed", "auto_completed", "cancelled", "confirmed"]) {
+    const db = createPrivacyDB({ orders: [seedOrder({ status })] });
+    const context = await loadFunction({ openid: "cleaner-a", db, env: { APP_ENV: "production" } });
+    try {
+      const result = await invoke(context.main, {
+        action: "submitServiceProof",
+        data: { orderId: "order-a", completionPhotoUrls: ["cloud://done-1"] },
+      });
+      expectFailed(result, "INVALID_STATUS", null, `${status} submitServiceProof should fail`);
+    } finally {
+      context.restore();
+    }
   }
 
   const proofStranger = await loadFunction({ openid: "cleaner-b", db: createPrivacyDB(), env: { APP_ENV: "production" } });
@@ -1310,6 +1594,7 @@ function runStaticMiniprogramTests() {
   const orderCreateText = fs.readFileSync(path.join(root, "miniprogram/pages/order-create/index.js"), "utf8");
   const orderDetailText = fs.readFileSync(path.join(root, "miniprogram/pages/order-detail/index.js"), "utf8");
   const orderDetailWxml = fs.readFileSync(path.join(root, "miniprogram/pages/order-detail/index.wxml"), "utf8");
+  const orderCardWxml = fs.readFileSync(path.join(root, "miniprogram/components/order-card/index.wxml"), "utf8");
   const profileText = fs.readFileSync(path.join(root, "miniprogram/pages/profile/index.js"), "utf8");
   const formatText = fs.readFileSync(path.join(root, "miniprogram/utils/format.js"), "utf8");
   const cloudIndexText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/index.js"), "utf8");
@@ -1322,6 +1607,12 @@ function runStaticMiniprogramTests() {
   assert(orderDetailWxml.includes("openClaimCreate"), "order-detail wxml should expose after-sales entry");
   assert(orderDetailWxml.includes("openExceptionReport"), "order-detail wxml should expose cleaner exception entry");
   assert(profileText.includes("openAfterSales"), "profile should include after-sales list entry");
+  const extraGroupMatch = orderCardWxml.match(/<view[^>]*class="order-extra-group"[\s\S]*?<\/view>/);
+  assert(extraGroupMatch, "order-card should retain order-extra-group for review/distance metadata");
+  assert(!extraGroupMatch[0].includes("afterSaleStatusText"), "afterSaleStatusText should not be rendered inside order-extra-group");
+  if (orderCardWxml.includes("afterSaleStatusText")) {
+    assert(orderCardWxml.includes("after-sale-line"), "afterSaleStatusText should use an independent line when shown on cards");
+  }
   assert(/Boolean\(order\.myResponse\)|order\.myResponse/.test(orderDetailText), "order-detail should include order.myResponse in hasResponse");
   assert(/responseCount:\s*Number\(order\.responseCount\s*\?\?/.test(formatText), "decorateOrder should preserve backend responseCount");
   assert(formatText.includes("afterSaleStatusText"), "decorateOrder should expose afterSaleStatusText");
