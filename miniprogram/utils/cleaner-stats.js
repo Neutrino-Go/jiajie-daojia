@@ -1,3 +1,5 @@
+const { cleanerOpenidOf } = require("./cleaner-id");
+
 function normalizeCleanerStats(cleaner = {}) {
   const stats = cleaner.stats || {};
   const serviceCount = Number(
@@ -17,7 +19,7 @@ function normalizeCleanerStats(cleaner = {}) {
       cleaner.communityCount ??
       (Array.isArray(cleaner.serviceAreas) ? cleaner.serviceAreas.length : 0)
   );
-  const cleanerId = cleaner.cleanerId || cleaner._openid || stats.cleanerId || "";
+  const cleanerId = cleanerOpenidOf(cleaner) || stats.cleanerId || "";
 
   console.log("[cleaner stats]", cleanerId, {
     serviceCount,

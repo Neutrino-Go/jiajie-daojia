@@ -1,5 +1,5 @@
 const { callCloud, showError } = require("../../utils/cloud");
-const { decorateCleaner } = require("../../utils/format");
+const { cleanerOpenidOf, decorateCleaner } = require("../../utils/format");
 const { requireRole, getCurrentLocation } = require("../../utils/session");
 
 Page({
@@ -46,11 +46,12 @@ Page({
   },
 
   openMyCleanerProfile() {
-    if (!this.data.cleaner || !this.data.cleaner._openid) {
+    const openid = cleanerOpenidOf(this.data.cleaner);
+    if (!this.data.cleaner || !openid) {
       wx.showToast({ title: "请先选择家洁师身份", icon: "none" });
       return;
     }
-    wx.navigateTo({ url: `/pages/cleaner-detail/index?openid=${this.data.cleaner._openid}&mode=view` });
+    wx.navigateTo({ url: `/pages/cleaner-detail/index?openid=${openid}&mode=view` });
   },
 
   goCleanerOrders() {

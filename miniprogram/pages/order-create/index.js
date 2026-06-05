@@ -3,7 +3,7 @@ const {
   SERVICE_TYPES,
   DURATION_OPTIONS,
 } = require("../../utils/constants");
-const { decorateCleaner } = require("../../utils/format");
+const { cleanerOpenidOf, decorateCleaner } = require("../../utils/format");
 const { requireRole, getRoleLocation, locationLabel, locationFullText } = require("../../utils/session");
 const { BASE_PRICING, calculateOrderPrice } = require("../../config/pricing");
 
@@ -217,7 +217,7 @@ Page({
       const cleaners = await callCloud("listSavedCleaners");
       const savedCleaners = cleaners.map(decorateCleaner);
       const cleanerIndex = savedCleaners.findIndex(
-        (cleaner) => cleaner._openid === this.data.form.assignedCleanerOpenid
+        (cleaner) => cleanerOpenidOf(cleaner) === this.data.form.assignedCleanerOpenid
       );
       this.setData({
         savedCleaners,
@@ -328,7 +328,7 @@ Page({
     const cleaner = this.data.savedCleaners[index];
     this.setData({
       cleanerIndex: index,
-      "form.assignedCleanerOpenid": cleaner ? cleaner._openid : "",
+      "form.assignedCleanerOpenid": cleaner ? cleanerOpenidOf(cleaner) : "",
       selectedCleanerName: cleaner ? cleaner.displayName : "请选择已收藏家洁师",
     });
   },
@@ -440,5 +440,11 @@ Page({
       wx.hideLoading();
       this.setData({ submitting: false });
     }
+  },
+
+  openLegal(event) {
+    const page = event.currentTarget.dataset.page;
+    if (!page) return;
+    wx.navigateTo({ url: `/pages/legal/${page}/index` });
   },
 });

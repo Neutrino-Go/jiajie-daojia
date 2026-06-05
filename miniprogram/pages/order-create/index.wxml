@@ -140,5 +140,12 @@
     </view>
   </view>
 
+  <view class="legal-links">
+    <text>提交即表示同意</text>
+    <text class="legal-link" data-page="user-agreement" bindtap="openLegal">用户协议</text>
+    <text>和</text>
+    <text class="legal-link" data-page="privacy-policy" bindtap="openLegal">隐私政策</text>
+  </view>
+
   <button class="btn btn-primary fixed-action" bindtap="submit">发布需求</button>
 </view>

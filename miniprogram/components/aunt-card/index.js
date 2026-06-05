@@ -1,3 +1,5 @@
+const { cleanerOpenidOf } = require("../../utils/format");
+
 Component({
   properties: {
     cleaner: {
@@ -7,7 +9,7 @@ Component({
   },
   methods: {
     open() {
-      this.triggerEvent("open", { openid: this.data.cleaner._openid });
+      this.triggerEvent("open", { openid: cleanerOpenidOf(this.data.cleaner) });
     },
   },
 });

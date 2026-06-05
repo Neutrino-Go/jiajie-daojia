@@ -1,0 +1,5 @@
+<view class="legal-page">
+  <view class="title">退款取消规则</view>
+  <view class="section">用户可在平台允许的订单状态内取消订单。已进入履约或已完成的订单，应通过客服与反馈入口提交争议或协助请求。</view>
+  <view class="section">真实支付、退款和结算能力待接入，具体处理以实际上线能力和订单页面提示为准。</view>
+</view>

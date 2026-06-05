@@ -4,6 +4,7 @@ const {
 } = require("./constants");
 const { calculateDistanceKm, distanceDisplay } = require("./location");
 const { normalizeCleanerStats } = require("./cleaner-stats");
+const { cleanerOpenidOf } = require("./cleaner-id");
 const { BASE_PRICING, calculateOrderPrice } = require("../config/pricing");
 
 function roundMoney(value) {
@@ -54,9 +55,9 @@ const ORDER_STATUS_COPY = {
       badgeText: "已拒绝",
     },
     waiting_payment: {
-      title: "待支付",
-      desc: "已选择家洁师，请完成支付后等待上门服务",
-      badgeText: "待支付",
+      title: "待平台确认",
+      desc: "支付能力待接入，当前订单暂不能进入履约流程。",
+      badgeText: "待确认",
     },
     confirmed: {
       title: "待服务",
@@ -111,9 +112,9 @@ const ORDER_STATUS_COPY = {
       badgeText: "已拒绝",
     },
     waiting_payment: {
-      title: "待客户支付",
-      desc: "客户完成支付后，你即可按约定时间上门服务",
-      badgeText: "待支付",
+      title: "待平台确认",
+      desc: "试运营流程待平台确认。",
+      badgeText: "待确认",
     },
     confirmed: {
       title: "待服务",
@@ -192,16 +193,16 @@ function normalizePaymentStatus(order) {
 function paymentStatusText(paymentStatus, role = "customer") {
   const customerMap = {
     unpaid: "未支付",
-    pending_pay: "待支付",
-    escrowed: "平台托管中",
-    settled: "已结算",
+    pending_pay: "待平台确认",
+    escrowed: "已确认",
+    settled: "已完成",
     refunded: "已退款",
   };
   const cleanerMap = {
     unpaid: "待用户确认",
-    pending_pay: "待用户支付",
-    escrowed: "平台托管中",
-    settled: "已结算",
+    pending_pay: "待平台确认",
+    escrowed: "已确认",
+    settled: "已完成",
     refunded: "已退款",
   };
   return (role === "cleaner" ? cleanerMap : customerMap)[paymentStatus] || customerMap.unpaid;
@@ -209,10 +210,10 @@ function paymentStatusText(paymentStatus, role = "customer") {
 
 function paymentStatusTip(paymentStatus, role = "customer") {
   if (role === "customer" && paymentStatus === "escrowed") {
-    return "费用已由平台托管，验收完成后结算给家洁师。";
+    return "试运营流程已确认，后续以订单服务进度为准。";
   }
   if (role === "cleaner" && paymentStatus === "escrowed") {
-    return "用户已支付，待服务完成后结算。";
+    return "试运营流程已确认，请按订单约定服务。";
   }
   return "";
 }
@@ -585,7 +586,7 @@ function decorateOrder(order, openid, role = "", referenceLocation = null) {
     paymentStatus,
     paymentStatusText: paymentStatusText(paymentStatus, viewerRole),
     paymentTip: paymentStatusTip(paymentStatus, viewerRole),
-    canPay: viewerRole === "customer" && displayStatus === "waiting_payment" && paymentStatus === "pending_pay",
+    canPay: false,
     scheduledText: shortDate(order.scheduledAt),
     workloadText: workload(order),
     orderAmount: price,
@@ -598,7 +599,7 @@ function decorateOrder(order, openid, role = "", referenceLocation = null) {
     cleanerIncomeText: `¥${formatMoney(cleanerIncome)}`,
     roleText: viewerRole === "customer" ? "我发布的" : viewerRole === "cleaner" && isCleaner ? "客户发布" : "可接订单",
     customerMaskedPhone: maskPhone(order.contactPhone),
-    responseCount: (order.responses || []).length,
+    responseCount: Number(order.responseCount ?? (order.responses || []).length),
     reviewedText: reviewBadgeText,
     reviewStatusText: reviewBadgeText,
     reviewBadgeText,
@@ -675,6 +676,7 @@ module.exports = {
   scoreRecommendedCleaner,
   sortRecommendedCleaners,
   getCleanerDistanceText,
+  cleanerOpenidOf,
   decorateOrder,
   decorateCleaner,
 };

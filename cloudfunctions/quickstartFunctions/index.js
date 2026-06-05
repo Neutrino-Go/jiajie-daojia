@@ -15,6 +15,7 @@ const {
   normalizeUserAddress,
   filterRecommendedCleanersByCity,
   isOrderOverdueForAutoAcceptance,
+  formatDistanceText,
 } = require("./lib/domain");
 const { calculateOrderPrice } = require("./lib/pricing");
 
@@ -36,6 +37,9 @@ const COLLECTIONS = [
   "conversations",
   "messages",
   "userAddresses",
+  "adminUsers",
+  "auditLogs",
+  "supportTickets",
 ];
 
 const COMMISSION_RATE = 0.05;
@@ -121,6 +125,121 @@ function getOpenid() {
   return cloud.getWXContext().OPENID;
 }
 
+function getAppEnv() {
+  return String(process.env.APP_ENV || process.env.NODE_ENV || process.env.WX_APP_ENV || "")
+    .trim()
+    .toLowerCase();
+}
+
+function isExplicitNonProduction() {
+  return ["local", "dev", "development", "test", "testing"].includes(getAppEnv());
+}
+
+function isProduction() {
+  return !isExplicitNonProduction();
+}
+
+function adminOpenidsFromEnv() {
+  return String(process.env.ADMIN_OPENIDS || "")
+    .split(/[\s,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function isAdmin(openid) {
+  if (!openid) return false;
+  if (adminOpenidsFromEnv().includes(openid)) return true;
+  const byOpenid = await findOne("adminUsers", { openid }).catch(() => null);
+  const byWxOpenid = byOpenid || (await findOne("adminUsers", { _openid: openid }).catch(() => null));
+  return Boolean(byWxOpenid && byWxOpenid.active !== false && byWxOpenid.disabled !== true);
+}
+
+async function requireAdmin(openid) {
+  if (!(await isAdmin(openid))) {
+    throw AppError("无管理员权限", "FORBIDDEN");
+  }
+  return { openid, role: "admin" };
+}
+
+function requireNonProduction(actionName) {
+  if (isProduction()) {
+    const message = actionName === "mockPayOrder" ? "正式环境不支持模拟支付" : `正式环境不支持 ${actionName}`;
+    throw AppError(message, "PRODUCTION_DISABLED");
+  }
+}
+
+function requireProductionConfirm(actionName, actual, expected) {
+  if (isProduction() && actual !== expected) {
+    throw AppError(`正式环境执行 ${actionName} 需要显式确认`, "CONFIRM_REQUIRED");
+  }
+}
+
+function assertActionAllowedInProduction(actionName, data = {}) {
+  if (actionName === "mockPayOrder") {
+    requireNonProduction(actionName);
+  }
+  if (actionName === "migrateOrderPaymentStatus") {
+    requireProductionConfirm(actionName, data.confirm, "MIGRATE_PAYMENT_STATUS");
+  }
+  if (actionName === "migrateOrderNos") {
+    requireProductionConfirm(actionName, data.confirm, "MIGRATE_ORDER_NOS");
+  }
+  if (actionName === "initCollectionsSeed") {
+    requireNonProduction("initCollections seed");
+  }
+  if (actionName === "autoAcceptOverdueOrders" && isProduction()) {
+    if (data.days !== undefined && data.days !== null && data.days !== "") {
+      throw AppError("正式环境自动验收不允许自定义天数", "PRODUCTION_DISABLED");
+    }
+  }
+}
+
+function scrubAuditValue(value, depth = 0) {
+  if (value === null || value === undefined) return value;
+  if (depth > 3) return "[omitted]";
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => scrubAuditValue(item, depth + 1));
+  if (typeof value === "string") {
+    if (/1[3-9]\d{9}/.test(value)) return "[redacted]";
+    if (/cloud:\/\//i.test(value)) return "[redacted]";
+    if (/policy|wechat|id-card|health-card/i.test(value)) return "[redacted]";
+    if (/\d+\.\d{3,}/.test(value)) return "[redacted]";
+    return value;
+  }
+  if (typeof value === "number") {
+    const text = String(value);
+    if (/\d+\.\d{3,}/.test(text)) return "[redacted]";
+    return value;
+  }
+  if (typeof value !== "object") return value;
+  const sensitiveKey = /(phone|wechat|address|detail|location|latitude|longitude|fileid|fileID|policy|idcard|identity|health|certificate|contact)/i;
+  return Object.keys(value).reduce((next, key) => {
+    next[key] = sensitiveKey.test(key) ? "[redacted]" : scrubAuditValue(value[key], depth + 1);
+    return next;
+  }, {});
+}
+
+async function writeAuditLog({ actorOpenid, actorRole, action, targetType, targetId, before, after, requestId, metadata }) {
+  try {
+    await safeCreateCollection("auditLogs");
+    await db.collection("auditLogs").add({
+      data: {
+        actorOpenid: actorOpenid || "",
+        actorRole: actorRole || "",
+        action,
+        targetType: targetType || "",
+        targetId: targetId || "",
+        before: scrubAuditValue(before),
+        after: scrubAuditValue(after),
+        requestId: requestId || "",
+        metadata: scrubAuditValue(metadata || {}),
+        createdAt: now(),
+      },
+    });
+  } catch (error) {
+    console.warn("[auditLogs] write failed", error && error.message ? error.message : error);
+  }
+}
+
 async function safeCreateCollection(name) {
   try {
     await db.createCollection(name);
@@ -187,13 +306,21 @@ async function getCustomerProfile(input = {}) {
 }
 
 async function getCleanerProfile(data = {}) {
-  const openid = data.openid || data.cleanerOpenid || getOpenid();
-  return ok({ cleanerProfile: await withCleanerStats(await getCleaner(openid)) });
+  const viewerOpenid = getOpenid();
+  const openid = data.openid || data.cleanerOpenid || viewerOpenid;
+  const viewerIsAdmin = await isAdmin(viewerOpenid);
+  const canViewContact = viewerIsAdmin || openid === viewerOpenid;
+  return ok({ cleanerProfile: await withCleanerStats(await getCleaner(openid), { canViewContact }) });
 }
 
 async function getCustomerProfileAction(data = {}) {
-  const openid = data.openid || data.customerOpenid || getOpenid();
-  return ok({ customerProfile: await getCustomerProfile(openid) });
+  const viewerOpenid = getOpenid();
+  const openid = data.openid || data.customerOpenid || viewerOpenid;
+  if (openid !== viewerOpenid) {
+    await requireAdmin(viewerOpenid);
+  }
+  const profile = await getCustomerProfile(openid);
+  return ok({ customerProfile: privateCustomerProfileForOwner(profile) });
 }
 
 async function ensureCustomerProfile(openid) {
@@ -257,21 +384,165 @@ async function getOrder(orderId) {
   return order.data ? { ...order.data, _id: order.data._id || orderId } : null;
 }
 
-function visibleContact(order, openid) {
-  if (!order || !CONTACT_STATUSES.includes(order.status)) {
-    return false;
-  }
-  return order.customerOpenid === openid || order.acceptedCleanerOpenid === openid;
+function canViewCustomerContact(order, viewerOpenid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order) return false;
+  if (order.customerOpenid === viewerOpenid) return true;
+  if (!CONTACT_STATUSES.includes(order.status)) return false;
+  return order.acceptedCleanerOpenid === viewerOpenid;
 }
 
-function hideContactIfNeeded(order, openid) {
-  if (visibleContact(order, openid)) {
+function canViewCleanerContact(order, viewerOpenid, cleanerOpenid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order || !cleanerOpenid) return false;
+  if (viewerOpenid === cleanerOpenid) return true;
+  if (order.customerOpenid === viewerOpenid) {
+    return CONTACT_STATUSES.includes(order.status) && order.acceptedCleanerOpenid === cleanerOpenid;
+  }
+  return false;
+}
+
+function canViewOrderPrivateNote(order, viewerOpenid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order) return false;
+  if (order.customerOpenid === viewerOpenid) return true;
+  return canViewCustomerContact(order, viewerOpenid, context);
+}
+
+function canViewOrderParticipantIds(order, viewerOpenid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order) return false;
+  return (
+    order.customerOpenid === viewerOpenid ||
+    order.acceptedCleanerOpenid === viewerOpenid ||
+    order.assignedCleanerOpenid === viewerOpenid
+  );
+}
+
+function visibleContact(order, openid, context = {}) {
+  return canViewCustomerContact(order, openid, context);
+}
+
+function publicLocationSnapshot(location = {}) {
+  return {
+    province: location.province || "",
+    city: location.city || "",
+    district: location.district || "",
+    street: location.street || "",
+    community: location.community || "",
+  };
+}
+
+function hideContactIfNeeded(order, openid, context = {}) {
+  if (canViewCustomerContact(order, openid, context)) {
     return order;
   }
+  const publicLocation = publicLocationSnapshot(order.locationSnapshot || order);
   return {
     ...order,
     contactPhone: "",
     contactWechat: "",
+    detailAddress: "",
+    addressText: "",
+    latitude: null,
+    longitude: null,
+    locationSnapshot: publicLocation,
+  };
+}
+
+function responseForViewer(response = {}) {
+  return {
+    cleanerId: response.cleanerId || "",
+    status: response.status || "",
+  };
+}
+
+function publicOrderForViewer(order, openid, context = {}) {
+  if (!order) return order;
+  if (context.isAdmin || order.customerOpenid === openid) {
+    return order;
+  }
+  const responses = Array.isArray(order.responses) ? order.responses : [];
+  const myResponse = responses.find((response) => response.cleanerId === openid);
+  const canViewFulfillment = canViewCustomerContact(order, openid, context);
+  const next = canViewFulfillment ? { ...order } : hideContactIfNeeded(order, openid, context);
+  if (!canViewOrderPrivateNote(order, openid, context)) {
+    next.note = "";
+  }
+  if (!canViewOrderParticipantIds(order, openid, context)) {
+    delete next.acceptedCleanerOpenid;
+    delete next.assignedCleanerOpenid;
+    delete next.cleanerId;
+  }
+  delete next.customerOpenid;
+  delete next.responses;
+  next.responseCount = responses.length;
+  if (myResponse) {
+    next.myResponse = responseForViewer(myResponse);
+  } else {
+    delete next.myResponse;
+  }
+  return next;
+}
+
+function customerAddressOf(profile = {}) {
+  profile = profile || {};
+  const address = profile.address || profile.defaultAddress || {};
+  return {
+    province: address.province || profile.province || "",
+    city: address.city || profile.city || "",
+    district: address.district || profile.district || "",
+    street: address.street || profile.street || "",
+    community: address.community || profile.community || "",
+    detailAddress: address.detailAddress || profile.detailAddress || "",
+  };
+}
+
+function publicCustomerProfile(profile = {}) {
+  profile = profile || {};
+  const address = customerAddressOf(profile);
+  return {
+    nickname: maskNickname(profile.nickname),
+    avatarUrl: profile.avatarUrl || "",
+    city: address.city,
+    district: address.district,
+    community: address.community,
+  };
+}
+
+function fulfillmentCustomerProfile(profile = {}) {
+  profile = profile || {};
+  const address = customerAddressOf(profile);
+  return {
+    nickname: profile.nickname || "邻里用户",
+    avatarUrl: profile.avatarUrl || "",
+    phone: profile.phone || "",
+    contactWechat: profile.contactWechat || profile.wechatContact || "",
+    address,
+    city: address.city,
+    district: address.district,
+    street: address.street,
+    community: address.community,
+    detailAddress: address.detailAddress,
+  };
+}
+
+function privateCustomerProfileForOwner(profile = {}) {
+  profile = profile || {};
+  const address = customerAddressOf(profile);
+  return {
+    role: "customer",
+    nickname: profile.nickname || "邻里用户",
+    avatarUrl: profile.avatarUrl || "",
+    phone: profile.phone || "",
+    contactWechat: profile.contactWechat || profile.wechatContact || "",
+    address,
+    defaultAddressId: profile.defaultAddressId || "",
+    city: address.city,
+    district: address.district,
+    street: address.street,
+    community: address.community,
+    detailAddress: address.detailAddress,
   };
 }
 
@@ -488,7 +759,7 @@ async function completeOrderWithReview(order, reviewInput, options = {}) {
   await refreshCleanerStats(order.acceptedCleanerOpenid, updateTime);
 }
 
-async function autoAcceptOverdueOrdersInternal(data = {}) {
+async function autoAcceptOverdueOrdersInternal(data = {}, auditContext = {}) {
   const checkedAt = now();
   const days = data.days === undefined || data.days === null ? null : Number(data.days);
   const limit = Math.min(Math.max(Number(data.limit || 100), 1), 100);
@@ -505,6 +776,16 @@ async function autoAcceptOverdueOrdersInternal(data = {}) {
       completedAt: checkedAt,
       autoAccepted: true,
     });
+    await writeAuditLog({
+      actorOpenid: auditContext.actorOpenid || "",
+      actorRole: auditContext.actorRole || "system",
+      action: "autoAcceptOverdueOrders",
+      targetType: "order",
+      targetId: order._id,
+      before: { status: order.status, paymentStatus: normalizePaymentStatus(order) },
+      after: { status: "auto_completed", paymentStatus: "settled", autoAccepted: true },
+      metadata: { checkedAt, days, source: auditContext.source || "internal" },
+    });
     orderIds.push(order._id);
   }
   return {
@@ -514,21 +795,27 @@ async function autoAcceptOverdueOrdersInternal(data = {}) {
   };
 }
 
-async function withCleanerStats(cleaner) {
+async function withCleanerStats(cleaner, viewerContext = {}) {
   if (!cleaner) return cleaner;
   const cleanerId = cleaner._openid || cleaner.cleanerId;
-  if (!cleanerId) return cleaner;
+  if (!cleanerId) return publicCleanerProfile(cleaner, viewerContext);
   const stats = await getCleanerStats(cleanerId, cleaner);
   return {
-    ...publicCleaner(cleaner),
+    ...publicCleanerProfile(cleaner, viewerContext),
     cleanerId,
-    stats,
+    stats: {
+      cleanerId,
+      rating: stats.rating,
+      ratingText: stats.ratingText,
+      reviewCount: stats.reviewCount,
+      serviceCount: stats.serviceCount,
+      communityCount: stats.communityCount,
+    },
     rating: stats.rating,
     ratingAvg: stats.rating,
     reviewCount: stats.reviewCount,
     serviceCount: stats.serviceCount,
     completedOrderCount: stats.serviceCount,
-    completedOrders: stats.completedOrders,
     communityCount: stats.communityCount,
   };
 }
@@ -550,14 +837,40 @@ function cleanerAvatarUrlOf(cleaner) {
   );
 }
 
-function publicCleaner(cleaner) {
+function publicCleanerProfile(cleaner, viewerContext = {}) {
   if (!cleaner) return cleaner;
+  const cleanerId = cleaner._openid || cleaner.cleanerId || "";
   const avatarUrl = cleanerAvatarUrlOf(cleaner);
-  return {
-    ...cleaner,
+  const distanceKm = cleaner.distanceKm === undefined || cleaner.distanceKm === null ? "" : cleaner.distanceKm;
+  const profile = {
+    cleanerId,
+    displayName: cleaner.displayName || "家洁师",
     avatarUrl,
     avatar: cleaner.avatar || avatarUrl,
+    ratingAvg: Number(cleaner.ratingAvg || cleaner.rating || 0),
+    reviewCount: Number(cleaner.reviewCount || 0),
+    completedOrderCount: Number(cleaner.completedOrderCount || cleaner.serviceCount || 0),
+    serviceCount: Number(cleaner.serviceCount || cleaner.completedOrderCount || 0),
+    serviceAreas: Array.isArray(cleaner.serviceAreas) ? cleaner.serviceAreas.slice(0, 20) : [],
+    serviceTypes: Array.isArray(cleaner.serviceTypes) ? cleaner.serviceTypes.slice(0, 20) : [],
+    experience: cleaner.experience || "",
+    available: Boolean(cleaner.available),
+    manualApproved: Boolean(cleaner.manualApproved),
+    phoneVerified: Boolean(cleaner.phoneVerified),
+    verificationBadges: Array.isArray(cleaner.verificationBadges) ? cleaner.verificationBadges.slice(0, 10) : [],
+    insuranceStatusText: cleaner.insuranceStatusText || "",
+    distanceKm,
+    distanceText: cleaner.distanceText || (distanceKm === "" ? "" : formatDistanceText(distanceKm)),
   };
+  if (viewerContext.canViewContact) {
+    profile.phone = cleaner.phone || "";
+    profile.wechatContact = cleaner.wechatContact || cleaner.contactWechat || "";
+  }
+  return profile;
+}
+
+function publicCleaner(cleaner) {
+  return publicCleanerProfile(cleaner);
 }
 
 function maskNickname(name) {
@@ -567,11 +880,16 @@ function maskNickname(name) {
 }
 
 function decorateReviewForDisplay(review, customerProfile = null, order = null) {
+  if (!review) return null;
   return {
-    ...review,
+    _id: review._id || "",
+    rating: Number(review.rating || 0),
+    content: review.content || "",
     imageUrls: normalizeReviewImageUrls(review.imageUrls),
     customerNameMasked: maskNickname(customerProfile && customerProfile.nickname),
     serviceType: review.serviceType || (order && order.serviceType) || "",
+    createdAt: review.createdAt || "",
+    updatedAt: review.updatedAt || review.createdAt || "",
   };
 }
 
@@ -670,11 +988,24 @@ async function ensureConversation(order) {
   return findOne("conversations", { participantKey: key });
 }
 
-async function initCollections() {
+async function initCollections(data = {}) {
   const openid = getOpenid();
+  await requireAdmin(openid);
   await Promise.all(COLLECTIONS.map((name) => safeCreateCollection(name)));
   await ensureUser(openid);
   await ensureCustomerProfile(openid);
+  const seedEnabled = data.seed === undefined ? isExplicitNonProduction() : Boolean(data.seed);
+  if (!seedEnabled) {
+    await writeAuditLog({
+      actorOpenid: openid,
+      actorRole: "admin",
+      action: "initCollections",
+      targetType: "collections",
+      metadata: { collections: COLLECTIONS, seeded: false },
+    });
+    return ok({ collections: COLLECTIONS, seededCleaners: 0 });
+  }
+  assertActionAllowedInProduction("initCollectionsSeed", data);
 
   const seedCleaners = [
     {
@@ -749,6 +1080,14 @@ async function initCollections() {
     },
   });
 
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "initCollections",
+    targetType: "collections",
+    metadata: { collections: COLLECTIONS, seeded: true, seededCleaners: seedCleaners.length },
+  });
+
   return ok({ collections: COLLECTIONS, seededCleaners: seedCleaners.length });
 }
 
@@ -763,8 +1102,8 @@ async function login() {
   if (user.role === "cleaner" && !cleaner) {
     cleaner = await ensureCleanerProfile(openid);
   }
-  cleaner = cleaner ? await withCleanerStats(cleaner) : cleaner;
-  return ok({ openid, user, customerProfile, cleaner, cleanerProfile: cleaner });
+  cleaner = cleaner ? await withCleanerStats(cleaner, { canViewContact: true }) : cleaner;
+  return ok({ openid, user, customerProfile: privateCustomerProfileForOwner(customerProfile), cleaner, cleanerProfile: cleaner });
 }
 
 async function updateUserRole(data) {
@@ -842,8 +1181,8 @@ async function getMyProfile(data) {
   const role = data.role === "cleaner" ? "cleaner" : "customer";
   const customerProfile = await getCustomerProfile(openid);
   const cleaner = role === "cleaner" ? await getCleaner(openid) : await getCleaner(openid).catch(() => null);
-  const cleanerProfile = cleaner ? await withCleanerStats(cleaner) : null;
-  return ok({ openid, user, role, customerProfile, cleanerProfile });
+  const cleanerProfile = cleaner ? await withCleanerStats(cleaner, { canViewContact: role === "cleaner" }) : null;
+  return ok({ openid, user, role, customerProfile: privateCustomerProfileForOwner(customerProfile), cleanerProfile });
 }
 
 async function updateMyProfile(data) {
@@ -859,7 +1198,7 @@ async function updateMyProfile(data) {
     return ok({
       role,
       user: await ensureUser(openid),
-      customerProfile: await getCustomerProfile(openid),
+      customerProfile: privateCustomerProfileForOwner(await getCustomerProfile(openid)),
       cleanerProfile,
       cleaner: cleanerProfile,
     });
@@ -883,8 +1222,8 @@ async function updateMyProfile(data) {
   return ok({
     role,
     user: await ensureUser(openid),
-    customerProfile: await getCustomerProfile(openid),
-      cleanerProfile: await withCleanerStats(await getCleaner(openid).catch(() => null)),
+    customerProfile: privateCustomerProfileForOwner(await getCustomerProfile(openid)),
+      cleanerProfile: await withCleanerStats(await getCleaner(openid).catch(() => null), { canViewContact: true }),
   });
 }
 
@@ -1215,7 +1554,10 @@ async function listAllOrdersForOrderNoMigration() {
   return orders;
 }
 
-async function migrateOrderNos() {
+async function migrateOrderNos(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  assertActionAllowedInProduction("migrateOrderNos", data);
   const orders = await listAllOrdersForOrderNoMigration();
   const usedSequences = {};
 
@@ -1245,6 +1587,14 @@ async function migrateOrderNos() {
     });
     migrated.push({ orderId: order._id, displayOrderNo });
   }
+
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "migrateOrderNos",
+    targetType: "orders",
+    metadata: { total: orders.length, migratedCount: migrated.length, migrated },
+  });
 
   return ok({
     total: orders.length,
@@ -1385,7 +1735,7 @@ async function listOpenOrders(data) {
   }
   return ok(
     orders.map((order) =>
-      hideContactIfNeeded(
+      publicOrderForViewer(
         {
           ...order,
           ...publicOrderLocationFlag(order, cleanerLocation),
@@ -1409,14 +1759,13 @@ async function listAssignedOrders() {
   return ok(
     result.data
       .filter((order) => ["assigned_waiting_accept", "pending"].includes(order.status))
-      .map((order) => hideContactIfNeeded(order, openid))
+      .map((order) => publicOrderForViewer(order, openid))
   );
 }
 
 async function listMyOrders() {
   const openid = getOpenid();
   const user = await ensureUser(openid);
-  await autoAcceptOverdueOrdersInternal();
   if (user.role === "customer") {
     const customerOrders = await db
       .collection("orders")
@@ -1425,7 +1774,7 @@ async function listMyOrders() {
       .limit(100)
       .get();
     const orders = await attachReviewInfoList(customerOrders.data);
-    return ok(orders.filter((order) => !order.hiddenForCustomer).map((order) => hideContactIfNeeded(order, openid)));
+    return ok(orders.filter((order) => !order.hiddenForCustomer).map((order) => publicOrderForViewer(order, openid)));
   }
   if (user.role === "cleaner") {
     const acceptedOrders = await db
@@ -1458,7 +1807,7 @@ async function listMyOrders() {
     const cleanerOrders = await attachReviewInfoList(
       Object.values(byId).sort((first, second) => new Date(second.updatedAt) - new Date(first.updatedAt))
     );
-    return ok(cleanerOrders.filter((order) => !order.hiddenForCleaner).map((order) => hideContactIfNeeded(order, openid)));
+    return ok(cleanerOrders.filter((order) => !order.hiddenForCleaner).map((order) => publicOrderForViewer(order, openid)));
   }
   throw AppError("请先选择账号身份");
 }
@@ -1467,7 +1816,7 @@ async function acceptOrder(data) {
   const openid = getOpenid();
   await requireUserRole(openid, "cleaner");
   const order = await getOrder(data.orderId);
-  const cleaner = await withCleanerStats(await getCleaner(openid));
+  const cleaner = await getCleaner(openid);
   assertCleanerCanAccept(order, cleaner);
 
   const acceptedAt = now();
@@ -1554,6 +1903,7 @@ async function selectOrderResponse(data) {
 
 async function mockPayOrder(data) {
   const openid = getOpenid();
+  assertActionAllowedInProduction("mockPayOrder", data);
   await requireUserRole(openid, "customer");
   const order = await getOrder(data.orderId);
   if (!order) {
@@ -1580,6 +1930,16 @@ async function mockPayOrder(data) {
     },
   });
   await ensureConversation({ ...order, _id: data.orderId, status: "confirmed" });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "customer",
+    action: "mockPayOrder",
+    targetType: "order",
+    targetId: data.orderId,
+    before: { status: order.status, paymentStatus: normalizePaymentStatus(order) },
+    after: { status: "confirmed", paymentStatus: "escrowed" },
+    metadata: { appEnv: getAppEnv() || "default-production" },
+  });
   return ok({ orderId: data.orderId, status: "confirmed", paymentStatus: "escrowed" });
 }
 
@@ -1676,6 +2036,16 @@ async function updateOrderStatus(data) {
       },
       { completedAt: updateTime }
     );
+    await writeAuditLog({
+      actorOpenid: openid,
+      actorRole: "customer",
+      action: "updateOrderStatus",
+      targetType: "order",
+      targetId: data.orderId,
+      before: { status: order.status, paymentStatus: normalizePaymentStatus(order) },
+      after: { status: nextStatus, paymentStatus: "settled" },
+      metadata: { nextStatus },
+    });
     return ok({ orderId: data.orderId, status: nextStatus });
   }
   const statusTime = {};
@@ -1702,6 +2072,18 @@ async function updateOrderStatus(data) {
       updatedAt: updateTime,
     },
   });
+  if (["cancelled", "in_service", "waiting_complete"].includes(nextStatus)) {
+    await writeAuditLog({
+      actorOpenid: openid,
+      actorRole: openid === order.customerOpenid ? "customer" : "cleaner",
+      action: "updateOrderStatus",
+      targetType: "order",
+      targetId: data.orderId,
+      before: { status: order.status, paymentStatus: normalizePaymentStatus(order) },
+      after: { status: nextStatus, paymentStatus: statusPaymentPatch(nextStatus, order).paymentStatus || normalizePaymentStatus(order) },
+      metadata: { nextStatus },
+    });
+  }
   return ok({ orderId: data.orderId, status: nextStatus });
 }
 
@@ -1735,10 +2117,23 @@ async function hideOrderForRole(data) {
         ? { hiddenForCleaner: true, hiddenForCleanerAt: hiddenAt, updatedAt: hiddenAt }
         : { hiddenForCustomer: true, hiddenForCustomerAt: hiddenAt, updatedAt: hiddenAt },
   });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: role,
+    action: "hideOrderForRole",
+    targetType: "order",
+    targetId: data.orderId,
+    before: { hiddenForCustomer: Boolean(order.hiddenForCustomer), hiddenForCleaner: Boolean(order.hiddenForCleaner), status: order.status },
+    after: role === "cleaner" ? { hiddenForCleaner: true } : { hiddenForCustomer: true },
+    metadata: { role },
+  });
   return ok({ orderId: data.orderId, role, hidden: true });
 }
 
 async function migrateOrderPaymentStatus(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  assertActionAllowedInProduction("migrateOrderPaymentStatus", data);
   const limit = Math.min(Math.max(Number(data.limit || 100), 1), 100);
   const result = await db.collection("orders").orderBy("createdAt", "desc").limit(limit).get();
   const migratedOrderIds = [];
@@ -1754,6 +2149,13 @@ async function migrateOrderPaymentStatus(data = {}) {
     });
     migratedOrderIds.push(order._id);
   }
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "migrateOrderPaymentStatus",
+    targetType: "orders",
+    metadata: { checkedCount: result.data.length, migratedCount: migratedOrderIds.length, migratedOrderIds },
+  });
   return ok({ checkedCount: result.data.length, migratedCount: migratedOrderIds.length, migratedOrderIds });
 }
 
@@ -1770,7 +2172,17 @@ async function updateCleanerAvailability(data) {
   await db.collection("cleaners").doc(cleaner._id).update({
     data: updateData,
   });
-  return ok({ cleaner: await withCleanerStats(await getCleaner(openid)) });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "cleaner",
+    action: "updateCleanerAvailability",
+    targetType: "cleaner",
+    targetId: cleaner._id,
+    before: { available: Boolean(cleaner.available) },
+    after: { available },
+  });
+  const updatedCleaner = await withCleanerStats(await getCleaner(openid), { canViewContact: true });
+  return ok({ cleaner: updatedCleaner, cleanerProfile: updatedCleaner });
 }
 
 async function updateCleanerLocation(data) {
@@ -1779,12 +2191,12 @@ async function updateCleanerLocation(data) {
   const cleaner = await ensureCleanerProfile(openid);
   const lastLocation = normalizeLastLocation(data.lastLocation || data);
   if (!lastLocation) {
-    return ok({ cleaner: await withCleanerStats(cleaner) });
+    return ok({ cleaner: await withCleanerStats(cleaner, { canViewContact: true }) });
   }
   await db.collection("cleaners").doc(cleaner._id).update({
     data: { lastLocation, updatedAt: now() },
   });
-  return ok({ cleaner: await withCleanerStats(await getCleaner(openid)) });
+  return ok({ cleaner: await withCleanerStats(await getCleaner(openid), { canViewContact: true }) });
 }
 
 async function listCleaners(data) {
@@ -1821,7 +2233,10 @@ async function getCleanerDetail(data) {
   if (!cleaner) {
     throw AppError("家洁师资料不存在");
   }
-  const enrichedCleaner = await withCleanerStats(cleaner);
+  const viewerIsAdmin = await isAdmin(viewerOpenid);
+  const enrichedCleaner = await withCleanerStats(cleaner, {
+    canViewContact: viewerIsAdmin || cleaner._openid === viewerOpenid,
+  });
   const recentReviews = await listVisibleCleanerReviews(data.cleanerOpenid, 3);
   const favorite = await findOne("favorites", {
     customerOpenid: viewerOpenid,
@@ -1857,7 +2272,7 @@ async function updateCleanerProfile(data) {
   if (Array.isArray(data.serviceTypes)) nextData.serviceTypes = data.serviceTypes.slice(0, 8);
 
   await db.collection("cleaners").doc(cleaner._id).update({ data: nextData });
-  const updatedCleaner = await withCleanerStats(await getCleaner(openid));
+  const updatedCleaner = await withCleanerStats(await getCleaner(openid), { canViewContact: true });
   return ok({ cleaner: updatedCleaner, cleanerProfile: updatedCleaner });
 }
 
@@ -1909,18 +2324,18 @@ async function listSavedCleaners() {
 
 async function getOrderDetail(data) {
   const openid = getOpenid();
-  await autoAcceptOverdueOrdersInternal();
   const order = await getOrder(data.orderId);
   if (!order) {
     throw AppError("订单不存在");
   }
 
   const user = await ensureUser(openid);
+  const viewerIsAdmin = await isAdmin(openid);
   const isCustomer = order.customerOpenid === openid;
   const isAcceptedCleaner = order.acceptedCleanerOpenid === openid;
   const isAssignedCleaner = order.assignedCleanerOpenid === openid;
   const hasResponse = (order.responses || []).some((response) => response.cleanerId === openid);
-  let canView = isCustomer || isAcceptedCleaner || isAssignedCleaner || hasResponse;
+  let canView = viewerIsAdmin || isCustomer || isAcceptedCleaner || isAssignedCleaner || hasResponse;
   if (
     !canView &&
     user.role === "cleaner" &&
@@ -1936,9 +2351,19 @@ async function getOrderDetail(data) {
 
   let cleaner = null;
   if (order.acceptedCleanerOpenid || order.assignedCleanerOpenid) {
-    cleaner = await withCleanerStats(await getCleaner(order.acceptedCleanerOpenid || order.assignedCleanerOpenid));
+    const cleanerOpenid = order.acceptedCleanerOpenid || order.assignedCleanerOpenid;
+    cleaner = await withCleanerStats(await getCleaner(cleanerOpenid), {
+      canViewContact: canViewCleanerContact(order, openid, cleanerOpenid, { isAdmin: viewerIsAdmin }),
+    });
   }
   const customerProfile = await getCustomerProfile(order.customerOpenid).catch(() => null);
+  const viewerCanViewCustomerContact = canViewCustomerContact(order, openid, { isAdmin: viewerIsAdmin });
+  const customerProfileForViewer =
+    viewerIsAdmin || isCustomer
+      ? privateCustomerProfileForOwner(customerProfile)
+      : viewerCanViewCustomerContact && isAcceptedCleaner
+        ? fulfillmentCustomerProfile(customerProfile)
+        : publicCustomerProfile(customerProfile);
   const review = await findOne("reviews", { orderId: data.orderId });
   const manualReview = isManualReview(review) ? { ...review, imageUrls: normalizeReviewImageUrls(review.imageUrls) } : null;
   const savedCleaner =
@@ -1952,9 +2377,9 @@ async function getOrderDetail(data) {
     ? { ...order, reviewId: manualReview._id, hasReview: true, canEditReview: canEditReview(manualReview, now()) }
     : { ...order, reviewId: "", hasReview: false, canEditReview: false };
   return ok({
-    order: hideContactIfNeeded(orderWithReview, openid),
+    order: publicOrderForViewer(orderWithReview, openid, { isAdmin: viewerIsAdmin }),
     cleaner,
-    customerProfile,
+    customerProfile: customerProfileForViewer,
     review: manualReview,
     canEditReview: manualReview ? canEditReview(manualReview, now()) : false,
     savedCleaner: Boolean(savedCleaner),
@@ -2157,7 +2582,6 @@ async function sendMessage(data) {
 async function getIncomeStats() {
   const openid = getOpenid();
   await requireUserRole(openid, "cleaner");
-  await autoAcceptOverdueOrdersInternal();
   const completedOrders = (await listCleanerCompletedOrders(openid)).filter(isSettledIncomeOrder);
   const nowDate = now();
   const monthStart = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1);
@@ -2286,8 +2710,66 @@ async function submitReview(data) {
   return ok({ orderId: data.orderId, reviewId });
 }
 
+async function createSupportTicket(data = {}) {
+  const openid = getOpenid();
+  const description = String(data.description || "").trim();
+  if (!description) {
+    throw AppError("请填写问题描述");
+  }
+  const viewerIsAdmin = await isAdmin(openid);
+  const user = await ensureUser(openid);
+  let orderId = "";
+  if (data.orderId) {
+    const order = await getOrder(data.orderId);
+    if (!order) {
+      throw AppError("订单不存在");
+    }
+    const canCreate =
+      viewerIsAdmin ||
+      order.customerOpenid === openid ||
+      order.acceptedCleanerOpenid === openid ||
+      order.assignedCleanerOpenid === openid;
+    if (!canCreate) {
+      throw AppError("无权为该订单提交工单", "FORBIDDEN");
+    }
+    orderId = data.orderId;
+  }
+
+  await safeCreateCollection("supportTickets");
+  const createdAt = now();
+  const result = await db.collection("supportTickets").add({
+    data: {
+      actorOpenid: openid,
+      actorRole: viewerIsAdmin ? "admin" : user.role || user.currentRole || "",
+      type: String(data.type || data.issueType || "general").trim().slice(0, 40),
+      orderId,
+      orderNo: String(data.orderNo || "").trim().slice(0, 80),
+      description: description.slice(0, 1000),
+      imageUrls: Array.isArray(data.imageUrls) ? data.imageUrls.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 6) : [],
+      status: "open",
+      createdAt,
+      updatedAt: createdAt,
+    },
+  });
+  return ok({ ticketId: result._id, status: "open" });
+}
+
 async function autoAcceptOverdueOrders(data) {
-  const result = await autoAcceptOverdueOrdersInternal(data);
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  assertActionAllowedInProduction("autoAcceptOverdueOrders", data);
+  const result = await autoAcceptOverdueOrdersInternal(data, {
+    actorOpenid: openid,
+    actorRole: "admin",
+    source: "adminAction",
+  });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "autoAcceptOverdueOrders.summary",
+    targetType: "orders",
+    metadata: result,
+  });
   return ok(result);
 }
 
@@ -2335,6 +2817,7 @@ const actions = {
   getIncomeStats,
   listReceivedReviews,
   submitReview,
+  createSupportTicket,
   autoAcceptOverdueOrders,
   migrateOrderNos,
 };

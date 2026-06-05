@@ -43,7 +43,7 @@ const STATUS_TIPS = {
   waiting_confirm: "已有家洁师响应，请选择合适的家洁师",
   assigned_waiting_accept: "已指定家洁师，等待对方接受",
   assigned_declined: "家洁师已拒绝，可重新指派或改为寻找家洁师",
-  waiting_payment: "已选择家洁师，请先支付到平台托管",
+  waiting_payment: "支付能力待接入，当前订单暂不能进入履约流程",
   confirmed: "订单已确认，双方联系方式已开放",
   in_service: "服务正在进行",
   waiting_complete: "家洁师已提交完成，请确认服务结果",

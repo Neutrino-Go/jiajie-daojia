@@ -1,0 +1,24 @@
+<view class="page">
+  <view class="card">
+    <view class="label">问题类型</view>
+    <picker mode="selector" range="{{['服务咨询','订单问题','意见反馈','隐私请求']}}" bindchange="onTypeChange">
+      <view class="picker">{{form.type}}</view>
+    </picker>
+
+    <view class="label">关联订单号</view>
+    <input class="input" value="{{form.orderNo}}" data-field="orderNo" bindinput="onInput" placeholder="可选" />
+
+    <view class="label">问题描述</view>
+    <textarea class="textarea" value="{{form.description}}" data-field="description" bindinput="onInput" placeholder="请描述需要协助处理的事项"></textarea>
+
+    <view class="label">图片</view>
+    <view class="images">
+      <view class="image-item" wx:for="{{images}}" wx:key="filePath">
+        <image src="{{item.filePath}}" mode="aspectFill"></image>
+        <view class="remove" data-index="{{index}}" catchtap="removeImage">×</view>
+      </view>
+      <view wx:if="{{images.length < 3}}" class="image-add" bindtap="chooseImages">+</view>
+    </view>
+  </view>
+  <button class="submit" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">提交</button>
+</view>

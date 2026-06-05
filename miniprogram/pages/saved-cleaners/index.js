@@ -1,5 +1,5 @@
 const { callCloud, showError } = require("../../utils/cloud");
-const { decorateCleaner } = require("../../utils/format");
+const { cleanerOpenidOf, decorateCleaner } = require("../../utils/format");
 const { requireRole } = require("../../utils/session");
 const { getCurrentLocationForDistance } = require("../../utils/location");
 
@@ -55,7 +55,7 @@ Page({
       })
     );
     wx.navigateTo({
-      url: `/pages/order-create/index?cleanerOpenid=${cleaner._openid}&prefill=${prefill}`,
+      url: `/pages/order-create/index?cleanerOpenid=${cleanerOpenidOf(cleaner)}&prefill=${prefill}`,
     });
   },
 

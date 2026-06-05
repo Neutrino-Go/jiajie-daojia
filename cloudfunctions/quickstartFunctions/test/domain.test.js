@@ -461,17 +461,17 @@ assert.strictEqual(decoratedNonLocalOrder.nonLocalText, "非同城");
 assert.strictEqual(decoratedNonLocalOrder.distanceDisplayText, "");
 assert.strictEqual(orderStatusStyle("waiting_payment"), "payment");
 assert.deepStrictEqual(getOrderStatusCopy("waiting_payment", "customer"), {
-  title: "待支付",
-  desc: "已选择家洁师，请完成支付后等待上门服务",
-  badgeText: "待支付",
+  title: "待平台确认",
+  desc: "支付能力待接入，当前订单暂不能进入履约流程。",
+  badgeText: "待确认",
 });
 assert.deepStrictEqual(getOrderStatusCopy("waiting_payment", "cleaner"), {
-  title: "待客户支付",
-  desc: "客户完成支付后，你即可按约定时间上门服务",
-  badgeText: "待支付",
+  title: "待平台确认",
+  desc: "试运营流程待平台确认。",
+  badgeText: "待确认",
 });
-assert.strictEqual(roleAwareStatusLabel("waiting_payment", "customer"), "待支付");
-assert.strictEqual(roleAwareStatusLabel("waiting_payment", "cleaner"), "待客户支付");
+assert.strictEqual(roleAwareStatusLabel("waiting_payment", "customer"), "待平台确认");
+assert.strictEqual(roleAwareStatusLabel("waiting_payment", "cleaner"), "待平台确认");
 assert.strictEqual(roleAwareStatusLabel("waiting_complete", "customer"), "待验收");
 assert.strictEqual(roleAwareStatusLabel("waiting_complete", "cleaner"), "待客户验收");
 assert.strictEqual(roleAwareStatusLabel("waiting_acceptance", "customer"), "待验收");

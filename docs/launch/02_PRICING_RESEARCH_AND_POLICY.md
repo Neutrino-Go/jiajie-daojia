@@ -45,6 +45,10 @@
 - `protectionFee`
 - `insuranceCostAllocation`
 - `platformSubsidy`
+- `platformSubsidyBudget`
+- `platformFundedDiscount`
+- `cashGrossMargin`
+- `cashBurn`
 - `cleanerBaseIncome`
 - `cleanerIncome`
 - `grossMargin`
@@ -86,6 +90,8 @@
 说明：
 
 - 拉新价低于部分公开市场价，应由平台补贴承担，不能压低阿姨收入。
+- 拉新价是限量补贴价，不是长期列表价；必须配置补贴预算、适用城市、适用服务类型、有效期和单用户/单小区使用限制。
+- 价格调研样本仍不足，当前结论需要人工补齐 9 城 App 截图和订单报价样本后再固化。
 - 上海公开日常保洁 3 小时可见 180-240 元区间，若长期以 119 元售卖，必须确认补贴预算和服务标准缩水风险。
 
 ## 深度保洁建议价格
@@ -139,8 +145,12 @@
 
 - `cleanerIncome = cleanerBaseIncome + platformSubsidyForCleaner`。
 - `couponDiscount` 只影响用户支付，不直接减少 `cleanerIncome`。
-- `platformSubsidy` 计入平台成本。
-- `grossMargin = customerPayAmount - cleanerIncome - protectionFee - insuranceCostAllocation - paymentFee - platformSubsidy`。
+- `platformFundedDiscount = max(0, listPrice - customerPayAmount - merchantFundedDiscount)`。
+- `platformSubsidyBudget` 记录该活动可用补贴预算和已消耗金额。
+- `cashGrossMargin = customerPayAmount - cleanerIncome - protectionFee - insuranceCostAllocation - paymentFee`。
+- `cashBurn = platformFundedDiscount + platformSubsidyForCleaner`。
+- `grossMargin = customerPayAmount - cleanerIncome - protectionFee - insuranceCostAllocation - paymentFee`。
+- 如果 `cleanerIncome` 已包含 `platformSubsidyForCleaner`，不得在 `grossMargin` 中再次扣减同一笔补贴，避免双重扣减。
 
 ## 报价流程
 
@@ -153,7 +163,7 @@
 
 ## MVP 改造建议
 
-v0.2.2 中实现：
+v0.2.3 中实现：
 
 - 新增 `pricingRules` 和 `pricingQuotes`。
 - 前后端只使用服务端报价。

@@ -1,0 +1,6 @@
+<view class="legal-page">
+  <view class="title">隐私政策</view>
+  <view class="section">平台仅在注册、下单、接单、履约沟通、客服处理和安全审计所需范围内收集和使用个人信息。</view>
+  <view class="section">公开订单和公开资料默认不展示手机号、微信号、详细地址、精确位置、证件材料或保单材料。</view>
+  <view class="section">用户可通过客服与反馈入口提出个人信息查询、更正、删除或注销相关请求。</view>
+</view>

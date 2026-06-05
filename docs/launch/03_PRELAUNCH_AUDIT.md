@@ -18,6 +18,36 @@
 
 ## P0 必须上线前解决
 
+### P0-r2-001 管理动作不能被普通用户触发
+
+- `initCollections`、`migrateOrderPaymentStatus`、`migrateOrderNos`、`autoAcceptOverdueOrders` 必须 `requireAdmin`。
+- production 下 migration 必须显式 confirm。
+- production seed/mock 必须有硬开关，环境变量缺失时按 production 处理。
+
+### P0-r2-002 普通读接口不能触发自动验收写操作
+
+- `listMyOrders`、`getOrderDetail`、`getIncomeStats` 不能调用 `autoAcceptOverdueOrdersInternal`。
+- 自动验收只允许 admin action、未来云定时或明确 internal/system 调用。
+- 实际自动完成订单必须写 audit log。
+
+### P0-r2-003 客户资料和订单详情必须按视角脱敏
+
+- 普通用户不能通过 `data.openid` 或 `data.customerOpenid` 查询他人 customerProfile。
+- 未选中家洁师不能看到客户手机号、微信号、详细地址、精确坐标或 `_openid`。
+- 已确认接单家洁师只能看到履约必要联系方式，不应看到内部字段或未来证件字段。
+
+### P0-r2-004 家洁师公开资料必须使用白名单
+
+- `publicCleaner` 不能直接 spread 原始 cleaner。
+- `listCleaners`、`getCleanerDetail`、`listSavedCleaners`、`getOrderDetail` 不得泄露 phone、wechatContact、lastLocation、证件 fileID、保单号或内部风险字段。
+- malformed cleaner 数据也不得原样返回。
+
+### P0-r2-005 support ticket 和合规页面是最小上线入口
+
+- `createSupportTicket` 带 orderId 时必须校验订单归属。
+- Profile、订单详情、下单页必须能进入客服/反馈或合规页面。
+- 小程序页面不得显示“暂未开放”类 production 文案。
+
 ### P0-001 production 不能继续使用 mockPayOrder
 
 现状：
