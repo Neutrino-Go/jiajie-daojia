@@ -1,4 +1,5 @@
 const { callCloud, showError } = require("../../utils/cloud");
+const { getUserRole } = require("../../utils/session");
 
 const CLAIM_TYPES = ["rework", "refund", "complaint", "property_damage", "cleaner_exception", "safety_risk", "other"];
 const CLAIM_LABELS = ["返工协商", "退款/补偿申请", "投诉反馈", "财损报备", "家洁师异常报备", "安全风险", "其他"];
@@ -50,7 +51,9 @@ Page({
     wx.showLoading({ title: "提交中" });
     try {
       const claimType = CLAIM_TYPES[this.data.typeIndex] || "complaint";
-      const action = claimType === "cleaner_exception" ? "reportCleanerException" : "createProtectionClaim";
+      const role = getUserRole();
+      const isCleanerExceptionAction = role === "cleaner" && ["cleaner_exception", "safety_risk"].includes(claimType);
+      const action = isCleanerExceptionAction ? "reportCleanerException" : "createProtectionClaim";
       const result = await callCloud(action, {
         orderId: this.data.orderId,
         claimType,

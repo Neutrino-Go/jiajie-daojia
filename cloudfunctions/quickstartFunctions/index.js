@@ -510,7 +510,8 @@ function canViewOrderParticipantIds(order, viewerOpenid, context = {}) {
 function canViewOrderAfterSalePrivateFields(order, viewerOpenid, context = {}) {
   if (context.isAdmin) return true;
   if (!order) return false;
-  return order.customerOpenid === viewerOpenid || order.acceptedCleanerOpenid === viewerOpenid;
+  if (order.customerOpenid === viewerOpenid) return true;
+  return order.acceptedCleanerOpenid === viewerOpenid && CONTACT_STATUSES.includes(order.status);
 }
 
 function visibleContact(order, openid, context = {}) {
@@ -2988,6 +2989,14 @@ function normalizeClaimType(type) {
   return claimType;
 }
 
+function normalizeCleanerExceptionType(type) {
+  const claimType = String(type || "cleaner_exception").trim();
+  if (!["cleaner_exception", "safety_risk"].includes(claimType)) {
+    throw AppError("异常报备类型不正确", "INVALID_INPUT");
+  }
+  return claimType;
+}
+
 function normalizeClaimDescription(description) {
   const text = String(description || "").trim();
   if (!text) {
@@ -3028,7 +3037,8 @@ function canViewProtectionClaim(claim, order, openid, context = {}) {
   if (!claim) return false;
   if (claim.claimantOpenid === openid) return true;
   if (!order) return false;
-  return order.customerOpenid === openid || order.acceptedCleanerOpenid === openid;
+  if (order.customerOpenid === openid) return true;
+  return order.acceptedCleanerOpenid === openid && CONTACT_STATUSES.includes(order.status);
 }
 
 function canReportCleanerException(order, openid, context = {}) {
@@ -3245,15 +3255,18 @@ async function updateProtectionClaimStatus(data = {}) {
     },
   });
   if (claim.orderId) {
-    const order = await getOrder(claim.orderId).catch(() => null);
-    const nextActiveClaimId = terminal
-      ? order && order.activeClaimId === claim._id
-        ? ""
-        : (order && order.activeClaimId) || ""
-      : claim._id;
+    const openStatuses = ["submitted", "under_review", "needs_more_info"];
+    let nextActiveClaimId = claim._id;
+    let nextAfterSaleStatus = nextStatus;
+    if (terminal) {
+      const claims = await listAllProtectionClaims();
+      const nextOpenClaim = claims.find((item) => item.orderId === claim.orderId && item._id !== claim._id && openStatuses.includes(item.status));
+      nextActiveClaimId = nextOpenClaim ? nextOpenClaim._id : "";
+      nextAfterSaleStatus = nextOpenClaim ? nextOpenClaim.status : nextStatus;
+    }
     await db.collection("orders").doc(claim.orderId).update({
       data: {
-        afterSaleStatus: nextStatus,
+        afterSaleStatus: nextAfterSaleStatus,
         activeClaimId: nextActiveClaimId,
         updatedAt,
       },
@@ -3327,7 +3340,7 @@ async function reportCleanerException(data = {}) {
       order,
       actorOpenid: openid,
       actorRole: "cleaner",
-      claimType: normalizeClaimType(data.claimType || "cleaner_exception"),
+      claimType: normalizeCleanerExceptionType(data.claimType),
       description,
       imageFileIDs,
       requestedAmount: 0,

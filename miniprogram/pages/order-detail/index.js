@@ -137,6 +137,7 @@ Page({
       const hasResponse =
         Boolean(order.myResponse) || (order.responses || []).some((response) => response.cleanerId === data.viewerOpenid);
       const canContactStatus = ["confirmed", "accepted", "in_service", "waiting_complete", "waiting_acceptance", "completed", "auto_completed"].includes(order.status);
+      const canCleanerAfterSale = isAcceptedCleaner && ["confirmed", "accepted", "in_service", "waiting_complete", "waiting_acceptance", "completed", "auto_completed"].includes(order.status);
       const person = isCustomerView
         ? {
             name: cleaner?.displayName || "家洁师",
@@ -228,7 +229,7 @@ Page({
         cleanerSaved: Boolean(data.savedCleaner),
         canRepublish: isDeclinedAssigned,
         canReassign: isDeclinedAssigned,
-        canAfterSale: isCustomer || isAcceptedCleaner,
+        canAfterSale: isCustomer || canCleanerAfterSale,
         canReportException: isCleanerView && (isAcceptedCleaner || isAssignedCleaner),
         starItems: starItems(nextRating),
         ratingHint: ratingText(nextRating),

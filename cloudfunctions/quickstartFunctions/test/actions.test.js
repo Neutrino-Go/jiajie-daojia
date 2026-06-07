@@ -1134,6 +1134,40 @@ async function runProtectionWorkflowTests() {
     afterSaleAcceptedCleaner.restore();
   }
 
+  const waitingPaymentAfterSaleOrder = seedOrder({
+    ...afterSaleOrder,
+    _id: "order-waiting-payment-after-sale-private",
+    status: "waiting_payment",
+    acceptedCleanerOpenid: "cleaner-a",
+    cleanerId: "cleaner-a",
+  });
+  const waitingPaymentCleaner = await loadFunction({
+    openid: "cleaner-a",
+    db: createPrivacyDB({ orders: [waitingPaymentAfterSaleOrder] }),
+    env: { APP_ENV: "production" },
+  });
+  try {
+    const detail = await invoke(waitingPaymentCleaner.main, { action: "getOrderDetail", data: { orderId: "order-waiting-payment-after-sale-private" } });
+    assert.strictEqual(detail.success, true);
+    assertNoAfterSalePrivateFields(detail.data.order, "waiting_payment selected cleaner order detail");
+  } finally {
+    waitingPaymentCleaner.restore();
+  }
+  const waitingPaymentCustomer = await loadFunction({
+    openid: "customer-a",
+    db: createPrivacyDB({ orders: [waitingPaymentAfterSaleOrder] }),
+    env: { APP_ENV: "production" },
+  });
+  try {
+    const detail = await invoke(waitingPaymentCustomer.main, { action: "getOrderDetail", data: { orderId: "order-waiting-payment-after-sale-private" } });
+    assert.strictEqual(detail.success, true);
+    assert.strictEqual(detail.data.order.serviceProof.note, "private proof");
+    assert.strictEqual(detail.data.order.completionPhotoUrls[0], "cloud://complete-private");
+    assert.strictEqual(detail.data.order.afterSaleStatus, "submitted");
+  } finally {
+    waitingPaymentCustomer.restore();
+  }
+
   const createDb = createPrivacyDB();
   const customer = await loadFunction({ openid: "customer-a", db: createDb, env: { APP_ENV: "production" } });
   try {
@@ -1272,6 +1306,40 @@ async function runProtectionWorkflowTests() {
     claimCleaner.restore();
   }
 
+  const waitingPaymentClaimDb = createPrivacyDB({
+    orders: [seedOrder({ _id: "waiting-payment-claim-order", status: "waiting_payment", acceptedCleanerOpenid: "cleaner-a", cleanerId: "cleaner-a" })],
+    protectionClaims: [
+      {
+        _id: "claim-waiting-payment-customer",
+        orderId: "waiting-payment-claim-order",
+        claimNo: "CLM-WAITING-PAYMENT",
+        claimantOpenid: "customer-a",
+        claimantRole: "customer",
+        claimType: "complaint",
+        status: "submitted",
+        description: "customer claim before fulfillment",
+        imageFileIDs: ["cloud://waiting-payment-claim"],
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+        auditTrail: [],
+      },
+    ],
+  });
+  const waitingPaymentClaimCleaner = await loadFunction({ openid: "cleaner-a", db: waitingPaymentClaimDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(waitingPaymentClaimCleaner.main, { action: "getProtectionClaimDetail", data: { claimId: "claim-waiting-payment-customer" } }),
+      "FORBIDDEN",
+      null,
+      "waiting_payment selected cleaner should not view customer claim"
+    );
+    const list = await invoke(waitingPaymentClaimCleaner.main, { action: "listMyProtectionClaims", data: {} });
+    assert.strictEqual(list.success, true);
+    assert.deepStrictEqual(list.data.claims.map((item) => item._id), []);
+  } finally {
+    waitingPaymentClaimCleaner.restore();
+  }
+
   const claimStranger = await loadFunction({ openid: "cleaner-b", db: claimDb, env: { APP_ENV: "production" } });
   try {
     const detail = await invoke(claimStranger.main, { action: "getProtectionClaimDetail", data: { claimId: "claim-a" } });
@@ -1405,6 +1473,7 @@ async function runProtectionWorkflowTests() {
     const result = await invoke(activeClaimClearAdmin.main, { action: "updateProtectionClaimStatus", data: { claimId: "claim-active-a", status: "resolved" } });
     assert.strictEqual(result.success, true);
     assert.strictEqual(activeClaimClearDb.data.orders[0].activeClaimId, "");
+    assert.strictEqual(activeClaimClearDb.data.orders[0].afterSaleStatus, "resolved");
   } finally {
     activeClaimClearAdmin.restore();
   }
@@ -1445,8 +1514,50 @@ async function runProtectionWorkflowTests() {
     const result = await invoke(activeClaimKeepAdmin.main, { action: "updateProtectionClaimStatus", data: { claimId: "claim-active-a", status: "resolved" } });
     assert.strictEqual(result.success, true);
     assert.strictEqual(activeClaimKeepDb.data.orders[0].activeClaimId, "claim-active-b");
+    assert.strictEqual(activeClaimKeepDb.data.orders[0].afterSaleStatus, "under_review");
   } finally {
     activeClaimKeepAdmin.restore();
+  }
+
+  const activeClaimNextDb = createPrivacyDB({
+    orders: [seedOrder({ activeClaimId: "claim-active-a", afterSaleStatus: "under_review" })],
+    protectionClaims: [
+      {
+        _id: "claim-active-a",
+        orderId: "order-a",
+        claimNo: "CLM-ACTIVE-A",
+        claimantOpenid: "customer-a",
+        claimantRole: "customer",
+        claimType: "complaint",
+        status: "under_review",
+        description: "active claim a",
+        auditTrail: [],
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+      {
+        _id: "claim-active-b",
+        orderId: "order-a",
+        claimNo: "CLM-ACTIVE-B",
+        claimantOpenid: "customer-a",
+        claimantRole: "customer",
+        claimType: "refund",
+        status: "submitted",
+        description: "active claim b",
+        auditTrail: [],
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const activeClaimNextAdmin = await loadFunction({ openid: "admin-a", db: activeClaimNextDb, env: { APP_ENV: "production", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const result = await invoke(activeClaimNextAdmin.main, { action: "updateProtectionClaimStatus", data: { claimId: "claim-active-a", status: "resolved" } });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(activeClaimNextDb.data.orders[0].activeClaimId, "claim-active-b");
+    assert.strictEqual(activeClaimNextDb.data.orders[0].afterSaleStatus, "submitted");
+  } finally {
+    activeClaimNextAdmin.restore();
   }
 
   const proofDb = createPrivacyDB({ orders: [seedOrder({ status: "in_service" })] });
@@ -1533,6 +1644,30 @@ async function runProtectionWorkflowTests() {
     assert.strictEqual(result.success, true);
     assert.strictEqual(assignedDb.data.protectionClaims[0].claimType, "cleaner_exception");
     assertAuditSafe(assignedDb, "reportCleanerException");
+    const safetyRisk = await invoke(assignedCleaner.main, {
+      action: "reportCleanerException",
+      data: { orderId: "assigned-order", claimType: "safety_risk", description: "Safety concern reported by cleaner." },
+    });
+    assert.strictEqual(safetyRisk.success, true);
+    assert.strictEqual(assignedDb.data.protectionClaims[1].claimType, "safety_risk");
+    expectFailed(
+      await invoke(assignedCleaner.main, {
+        action: "reportCleanerException",
+        data: { orderId: "assigned-order", claimType: "refund", description: "refund should not be reported through exception action" },
+      }),
+      "INVALID_INPUT",
+      null,
+      "cleaner exception refund type"
+    );
+    expectFailed(
+      await invoke(assignedCleaner.main, {
+        action: "reportCleanerException",
+        data: { orderId: "assigned-order", claimType: "complaint", description: "complaint should not be reported through exception action" },
+      }),
+      "INVALID_INPUT",
+      null,
+      "cleaner exception complaint type"
+    );
   } finally {
     assignedCleaner.restore();
   }
@@ -1594,6 +1729,7 @@ function runStaticMiniprogramTests() {
   const orderCreateText = fs.readFileSync(path.join(root, "miniprogram/pages/order-create/index.js"), "utf8");
   const orderDetailText = fs.readFileSync(path.join(root, "miniprogram/pages/order-detail/index.js"), "utf8");
   const orderDetailWxml = fs.readFileSync(path.join(root, "miniprogram/pages/order-detail/index.wxml"), "utf8");
+  const claimCreateText = fs.readFileSync(path.join(root, "miniprogram/pages/claim-create/index.js"), "utf8");
   const orderCardWxml = fs.readFileSync(path.join(root, "miniprogram/components/order-card/index.wxml"), "utf8");
   const profileText = fs.readFileSync(path.join(root, "miniprogram/pages/profile/index.js"), "utf8");
   const formatText = fs.readFileSync(path.join(root, "miniprogram/utils/format.js"), "utf8");
@@ -1602,8 +1738,12 @@ function runStaticMiniprogramTests() {
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
   assert(orderDetailText.includes("openClaimCreate"), "order-detail should include claim create entry");
   assert(orderDetailText.includes("openExceptionReport"), "order-detail should include cleaner exception entry");
-  assert(/canAfterSale:\s*isCustomer\s*\|\|\s*isAcceptedCleaner/.test(orderDetailText), "order-detail should only expose general after-sales to customer or accepted cleaner");
+  assert(orderDetailText.includes("canCleanerAfterSale"), "order-detail should compute canCleanerAfterSale by fulfillment status");
+  assert(!/canAfterSale:\s*isCustomer\s*\|\|\s*isAcceptedCleaner/.test(orderDetailText), "order-detail should not expose after-sales to all acceptedCleanerOpenid states");
   assert(!/canAfterSale:\s*isCustomer\s*\|\|\s*isAcceptedCleaner\s*\|\|\s*isAssignedCleaner/.test(orderDetailText), "assigned cleaner should use exception report, not general after-sales");
+  assert(claimCreateText.includes("getUserRole"), "claim-create should read current user role");
+  assert(/getUserRole\(\)\s*===\s*"cleaner"|role\s*===\s*"cleaner"/.test(claimCreateText), "claim-create should check cleaner role before reportCleanerException");
+  assert(/cleaner_exception/.test(claimCreateText) && /safety_risk/.test(claimCreateText) && /reportCleanerException/.test(claimCreateText), "claim-create should route cleaner exception and safety_risk to reportCleanerException");
   assert(orderDetailWxml.includes("openClaimCreate"), "order-detail wxml should expose after-sales entry");
   assert(orderDetailWxml.includes("openExceptionReport"), "order-detail wxml should expose cleaner exception entry");
   assert(profileText.includes("openAfterSales"), "profile should include after-sales list entry");
