@@ -199,6 +199,11 @@ function isOrderOverdueForAutoAcceptance(order, currentTime = new Date(), days =
   return checkedAt.getTime() - finishedAt.getTime() > hours * 60 * 60 * 1000;
 }
 
+function isMoveInServiceType(serviceType) {
+  const value = String(serviceType || "").trim();
+  return value === "开荒保洁" || value === "moveIn" || value === "movein";
+}
+
 function assertCreateOrderInput(input) {
   requireValue(input.publishMode, "请选择发布方式");
   if (!["public", "assigned"].includes(input.publishMode)) {
@@ -208,8 +213,8 @@ function assertCreateOrderInput(input) {
     requireValue(input.assignedCleanerOpenid, "请选择指派家洁师");
   }
   requireValue(input.serviceType, "请选择服务类型");
-  if ((input.serviceType === "深度保洁" || input.serviceType === "开荒保洁") && Number(input.areaSize || 0) <= 0) {
-    throw AppError("请填写面积后再发布");
+  if (isMoveInServiceType(input.serviceType) && Number(input.areaSqm || input.areaSize || 0) <= 0) {
+    throw AppError("开荒保洁请填写面积后再发布");
   }
   if (!input.addressText && !input.community) {
     throw AppError("请填写地址或小区");

@@ -326,7 +326,26 @@ Page({
       "form.quoteId": "",
     };
     if (!city || (isMoveInService && Number(this.data.form.areaSize || 0) <= 0)) {
-      this.setData(baseUpdates);
+      const estimateHint = !city ? "请选择服务地址后获取报价" : "开荒保洁请填写面积后获取报价";
+      this.setData({
+        ...baseUpdates,
+        pricing: {
+          ...fallback,
+          canShowEstimate: false,
+          estimateHint,
+          orderAmount: 0,
+          customerPayAmount: 0,
+          orderAmountText: "",
+          listPriceText: "",
+          discountText: "",
+          pricingText: "",
+          quoteStatusText: "",
+        },
+        estimatePrice: 0,
+        "form.estimatedPrice": 0,
+        "form.orderAmount": 0,
+        "form.customerPayAmount": 0,
+      });
       return null;
     }
     this.setData({ ...baseUpdates, pricingLoading: true });

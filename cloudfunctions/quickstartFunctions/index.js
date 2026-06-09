@@ -566,13 +566,38 @@ function responseForViewer(response = {}) {
   };
 }
 
+function publicResponseForCustomer(response = {}) {
+  return {
+    cleanerId: response.cleanerId || "",
+    cleanerName: response.cleanerName || "",
+    avatar: response.avatar || "",
+    avatarUrl: response.avatarUrl || "",
+    avatarText: response.avatarText || "",
+    rating: Number(response.rating || 0),
+    completedOrders: Number(response.completedOrders || 0),
+    distance: response.distance || "",
+    responseTime: response.responseTime || "",
+    quotedAmount: Number(response.quotedAmount || 0),
+    status: response.status || "",
+  };
+}
+
 function publicOrderForViewer(order, openid, context = {}) {
   if (!order) return order;
   if (context.isAdmin) {
     return order;
   }
   if (order.customerOpenid === openid) {
-    return sanitizeOrderPricingForViewer(order, openid, context);
+    const responses = Array.isArray(order.responses) ? order.responses : [];
+    return sanitizeOrderPricingForViewer(
+      {
+        ...order,
+        responses: responses.map(publicResponseForCustomer),
+        responseCount: Number(order.responseCount ?? responses.length),
+      },
+      openid,
+      context
+    );
   }
   const responses = Array.isArray(order.responses) ? order.responses : [];
   const myResponse = responses.find((response) => response.cleanerId === openid);
@@ -736,7 +761,7 @@ function pricingSnapshotFromQuote(calculated, metadata = {}) {
   return snapshot;
 }
 
-function publicOrderPricingSnapshot(snapshot = {}, includeCleanerIncome = false) {
+function publicOrderPricingSnapshot(snapshot = {}, includeCleanerIncome = false, includeCoupon = false) {
   if (!snapshot) return snapshot;
   const next = {
     quoteId: snapshot.quoteId || "",
@@ -756,8 +781,6 @@ function publicOrderPricingSnapshot(snapshot = {}, includeCleanerIncome = false)
     launchPrice: Number(snapshot.launchPrice || 0),
     customerPayAmount: Number(snapshot.customerPayAmount || snapshot.orderAmount || 0),
     orderAmount: Number(snapshot.orderAmount || snapshot.customerPayAmount || 0),
-    couponCode: snapshot.couponCode || "",
-    couponDiscount: Number(snapshot.couponDiscount || 0),
     platformFundedDiscount: Number(snapshot.platformFundedDiscount || 0),
     requiresSubsidy: Boolean(snapshot.requiresSubsidy),
     pricingText: snapshot.pricingText || "报价由平台服务端生成，金额单位为人民币元。",
@@ -765,6 +788,13 @@ function publicOrderPricingSnapshot(snapshot = {}, includeCleanerIncome = false)
   };
   if (includeCleanerIncome) {
     next.cleanerIncome = Number(snapshot.cleanerIncome || 0);
+  }
+  if (includeCoupon) {
+    next.couponCode = snapshot.couponCode || "";
+    next.couponDiscount = Number(snapshot.couponDiscount || 0);
+  } else {
+    delete next.couponCode;
+    delete next.couponDiscount;
   }
   return next;
 }
@@ -779,8 +809,9 @@ function sanitizeOrderPricingForViewer(order, openid, context = {}) {
   if (!order || context.isAdmin) return order;
   const next = { ...order };
   const canViewCleanerIncome = canViewOrderCleanerIncome(order, openid, context);
+  const canViewCoupon = order.customerOpenid === openid;
   if (next.pricingSnapshot) {
-    next.pricingSnapshot = publicOrderPricingSnapshot(next.pricingSnapshot, canViewCleanerIncome);
+    next.pricingSnapshot = publicOrderPricingSnapshot(next.pricingSnapshot, canViewCleanerIncome, canViewCoupon);
   }
   if (!canViewCleanerIncome) {
     delete next.cleanerIncome;
@@ -790,6 +821,7 @@ function sanitizeOrderPricingForViewer(order, openid, context = {}) {
     "platformFee",
     "platformFeeRate",
     "couponDiscount",
+    "couponCode",
     "platformFundedDiscount",
     "protectionFee",
     "platformSubsidy",
@@ -860,6 +892,14 @@ async function createPricingQuoteRecord(input = {}, actorOpenid, options = {}) {
   return record;
 }
 
+function publicPricingQuoteInput(input = {}) {
+  return {
+    ...input,
+    couponCode: "",
+    couponDiscount: 0,
+  };
+}
+
 function isQuoteExpired(quote, checkedAt = now()) {
   if (!quote || !quote.expiresAt) return false;
   const expiresAt = new Date(quote.expiresAt);
@@ -868,8 +908,9 @@ function isQuoteExpired(quote, checkedAt = now()) {
 
 function quoteMatchesOrderData(quote, data = {}) {
   const snapshot = quote.pricingSnapshot || quote;
-  const city = String((data.locationSnapshot && data.locationSnapshot.city) || data.city || snapshot.city || "").trim();
-  if (city && snapshot.city && city !== snapshot.city) return false;
+  const city = String((data.locationSnapshot && data.locationSnapshot.city) || data.city || "").trim();
+  if (!city) return false;
+  if (snapshot.city && city !== snapshot.city) return false;
   if (normalizeServiceTypeKey(data.serviceType) !== snapshot.serviceType) return false;
   if (snapshot.pricingMode === "area") {
     const areaSqm = Number(data.areaSqm || data.areaSize || 0);
@@ -887,6 +928,24 @@ async function getValidQuoteForOrder(data = {}, openid) {
   if (isQuoteExpired(quote)) throw AppError("报价已过期，请重新获取报价", "INVALID_INPUT");
   if (!quoteMatchesOrderData(quote, data)) throw AppError("报价与订单信息不一致，请重新获取报价", "INVALID_INPUT");
   return quote;
+}
+
+async function consumePricingQuoteForOrder(quote, openid, consumedAt = now()) {
+  if (!quote || !quote.quoteId) throw AppError("报价不存在或已失效", "INVALID_INPUT");
+  const result = await db
+    .collection("pricingQuotes")
+    .where({ quoteId: quote.quoteId, userOpenid: openid, status: "active" })
+    .update({
+      data: {
+        status: "used",
+        usedAt: consumedAt,
+        updatedAt: consumedAt,
+      },
+    });
+  const updated = Number(result.updated ?? (result.stats && result.stats.updated) ?? 0);
+  if (updated !== 1) {
+    throw AppError("报价已使用或失效，请重新获取报价", "INVALID_INPUT");
+  }
 }
 
 function fallbackServiceStandard(serviceType = "保洁服务") {
@@ -1933,7 +1992,7 @@ async function getPricingRules() {
 async function createPricingQuote(data = {}) {
   const openid = getOpenid();
   await requireUserRole(openid, "customer");
-  const quote = await createPricingQuoteRecord(data, openid, { generatedBy: "createPricingQuote" });
+  const quote = await createPricingQuoteRecord(publicPricingQuoteInput(data), openid, { generatedBy: "createPricingQuote" });
   return ok({ quote: publicPricingQuote(quote) });
 }
 
@@ -2152,6 +2211,9 @@ async function createOrder(data) {
   const serviceStandard = await getDefaultServiceStandard(data.serviceType);
   const protectionPlan = await getDefaultProtectionPlan();
   const displayOrder = await nextDisplayOrderNo(locationSnapshot, createdAt);
+  if (quote.quoteId) {
+    await consumePricingQuoteForOrder(quote, openid, createdAt);
+  }
   const result = await db.collection("orders").add({
     data: {
       customerOpenid: openid,
@@ -2216,15 +2278,6 @@ async function createOrder(data) {
       updatedAt: createdAt,
     },
   });
-  if (quote.quoteId) {
-    await db.collection("pricingQuotes").doc(quote._id || quote.quoteId).update({
-      data: {
-        status: "used",
-        usedAt: createdAt,
-        updatedAt: createdAt,
-      },
-    });
-  }
   return ok({ orderId: result._id });
 }
 

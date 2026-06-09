@@ -172,6 +172,15 @@ v0.2.3 中实现：
 
 ## v0.2.3 implementation update
 
+## v0.2.3-r2 security update
+
+- Public `createPricingQuote` no longer trusts client-provided raw `couponDiscount`; until a real coupon rule service is enabled, public requests are quoted with server-controlled discount values.
+- `createOrder` requires an explicit order city when consuming `quoteId`; a quote from one city cannot be reused for another city or for an order with missing city.
+- Quote consumption now uses a conditional update on active quotes before order creation, so duplicate clicks cannot reuse the same active quote to create multiple orders.
+- Deep cleaning remains hourly-priced and no longer requires an area field; only move-in/opening cleaning requires `areaSqm` or `areaSize`.
+- Customer-visible cleaner responses are whitelisted and do not expose `platformFee` or `cleanerIncome`.
+- The order-create page should not show local fallback pricing before a service city is selected; it prompts the user to choose an address and fetch a server quote.
+
 v0.2.3 将服务端云函数作为唯一可信报价源。前端 `miniprogram/config/pricing.js` 仅保留为 UI fallback / legacy compatibility，不作为权威价格源。
 
 本版本落地内容：

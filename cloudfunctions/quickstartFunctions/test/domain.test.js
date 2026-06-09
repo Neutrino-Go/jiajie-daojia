@@ -153,6 +153,36 @@ assertCreateOrderInput({
   contactPhone: "13800000000",
 });
 
+assertCreateOrderInput({
+  publishMode: "public",
+  serviceType: "深度保洁",
+  community: "梧桐小区",
+  scheduledAt: "2026-05-22 09:00",
+  contactPhone: "13800000000",
+});
+
+assertCreateOrderInput({
+  publishMode: "public",
+  serviceType: "开荒保洁",
+  areaSqm: 80,
+  community: "梧桐小区",
+  scheduledAt: "2026-05-22 09:00",
+  contactPhone: "13800000000",
+});
+
+mustThrow(
+  "moveIn cleaning requires area",
+  () =>
+    assertCreateOrderInput({
+      publishMode: "public",
+      serviceType: "开荒保洁",
+      community: "梧桐小区",
+      scheduledAt: "2026-05-22 09:00",
+      contactPhone: "13800000000",
+    }),
+  "开荒保洁请填写面积后再发布"
+);
+
 mustThrow(
   "assigned cleaner requirement",
   () =>

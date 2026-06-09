@@ -111,6 +111,17 @@ class MemoryCollection {
     if (this.limitSize) results = results.slice(0, this.limitSize);
     return { data: results.map(clone) };
   }
+
+  async update({ data }) {
+    let updated = 0;
+    this.records = this.records.map((item) => {
+      if (this.query && !matchesQuery(item, this.query)) return item;
+      updated += 1;
+      return mergeUpdate(item, data || {});
+    });
+    this.db.data[this.name] = this.records;
+    return { updated, stats: { updated } };
+  }
 }
 
 class MemoryDB {
@@ -980,8 +991,17 @@ async function runPricingEngineTests() {
     });
     assert.strictEqual(couponQuote.success, true);
     const couponStored = quoteDb.data.pricingQuotes.find((quote) => quote.quoteId === couponQuote.data.quote.quoteId);
-    assert.strictEqual(couponStored.pricingSnapshot.customerPayAmount, 59);
+    assert.strictEqual(couponStored.pricingSnapshot.customerPayAmount, 79, "public couponDiscount should be ignored");
+    assert.strictEqual(couponStored.pricingSnapshot.couponDiscount, 0, "public action should not trust raw couponDiscount");
     assert(couponStored.pricingSnapshot.cleanerIncome >= 96, "coupon should not reduce cleanerIncome");
+
+    const tamperedCouponQuote = await invoke(quoteCustomer.main, {
+      action: "createPricingQuote",
+      data: { city: SHANGHAI, serviceType: DAILY, durationHours: 2, couponDiscount: 999 },
+    });
+    assert.strictEqual(tamperedCouponQuote.success, true);
+    assert.strictEqual(tamperedCouponQuote.data.quote.customerPayAmount, 79, "couponDiscount=999 must not make price zero");
+    assert.strictEqual(tamperedCouponQuote.data.quote.couponDiscount, 0);
   } finally {
     quoteCustomer.restore();
   }
@@ -1054,6 +1074,7 @@ async function runPricingEngineTests() {
       null,
       "used quote createOrder"
     );
+    assert.strictEqual(lifecycleDb.data.orders.length, 1, "reusing used quote should not create another order");
   } finally {
     lifecycleCustomer.restore();
   }
@@ -1107,9 +1128,146 @@ async function runPricingEngineTests() {
     expiredCustomer.restore();
   }
 
+  const cityMismatchDb = createPrivacyDB({ orders: [] });
+  const cityMismatchCustomer = await loadFunction({ openid: "customer-a", db: cityMismatchDb, env: { APP_ENV: "production" } });
+  try {
+    const quoteResult = await invoke(cityMismatchCustomer.main, {
+      action: "createPricingQuote",
+      data: { city: HANGZHOU, serviceType: DAILY, durationHours: 3 },
+    });
+    assert.strictEqual(quoteResult.success, true);
+    const hangzhouQuoteId = quoteResult.data.quote.quoteId;
+    expectFailed(
+      await invoke(cityMismatchCustomer.main, {
+        action: "createOrder",
+        data: {
+          publishMode: "public",
+          serviceType: DAILY,
+          city: SHANGHAI,
+          community: "\u8bd5\u70b9\u5c0f\u533a",
+          addressText: "\u4e0a\u6d77\u5e02\u8bd5\u70b9\u5c0f\u533a",
+          durationHours: 3,
+          scheduledAt: "2026-06-22 09:00",
+          contactPhone: "13800000000",
+          quoteId: hangzhouQuoteId,
+        },
+      }),
+      "INVALID_INPUT",
+      null,
+      "quote city mismatch"
+    );
+    expectFailed(
+      await invoke(cityMismatchCustomer.main, {
+        action: "createOrder",
+        data: {
+          publishMode: "public",
+          serviceType: DAILY,
+          community: "\u68a7\u6850\u5c0f\u533a",
+          addressText: "\u68a7\u6850\u5c0f\u533a",
+          durationHours: 3,
+          scheduledAt: "2026-06-22 09:00",
+          contactPhone: "13800000000",
+          quoteId: hangzhouQuoteId,
+        },
+      }),
+      "INVALID_INPUT",
+      null,
+      "quote missing city"
+    );
+    const locationCityResult = await invoke(cityMismatchCustomer.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: DAILY,
+        locationSnapshot: { city: HANGZHOU, district: "\u897f\u6e56\u533a", community: "\u68a7\u6850\u5c0f\u533a", addressText: "\u676d\u5dde\u5e02\u68a7\u6850\u5c0f\u533a" },
+        community: "\u68a7\u6850\u5c0f\u533a",
+        addressText: "\u676d\u5dde\u5e02\u68a7\u6850\u5c0f\u533a",
+        durationHours: 3,
+        scheduledAt: "2026-06-22 09:00",
+        contactPhone: "13800000000",
+        quoteId: hangzhouQuoteId,
+      },
+    });
+    assert.strictEqual(locationCityResult.success, true, "locationSnapshot.city should satisfy quote city match");
+  } finally {
+    cityMismatchCustomer.restore();
+  }
+
   const fallbackDb = createPrivacyDB({ orders: [] });
   const fallbackCustomer = await loadFunction({ openid: "customer-a", db: fallbackDb, env: { APP_ENV: "production" } });
   try {
+    const deepResult = await invoke(fallbackCustomer.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: DEEP,
+        city: SHANGHAI,
+        district: "\u6d66\u4e1c\u65b0\u533a",
+        street: "\u82b1\u6728\u8857\u9053",
+        community: "\u8bd5\u70b9\u5c0f\u533a",
+        addressText: "\u4e0a\u6d77\u5e02\u6d66\u4e1c\u65b0\u533a\u8bd5\u70b9\u5c0f\u533a",
+        durationHours: 3,
+        scheduledAt: "2026-06-20 09:00",
+        contactPhone: "13800000000",
+      },
+    });
+    assert.strictEqual(deepResult.success, true, "deep cleaning should not require area");
+
+    const moveInAreaSqmResult = await invoke(fallbackCustomer.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: MOVE_IN,
+        city: SHANGHAI,
+        district: "\u6d66\u4e1c\u65b0\u533a",
+        street: "\u82b1\u6728\u8857\u9053",
+        community: "\u8bd5\u70b9\u5c0f\u533a",
+        addressText: "\u4e0a\u6d77\u5e02\u6d66\u4e1c\u65b0\u533a\u8bd5\u70b9\u5c0f\u533a",
+        durationHours: 4,
+        areaSqm: 80,
+        scheduledAt: "2026-06-20 10:00",
+        contactPhone: "13800000000",
+      },
+    });
+    assert.strictEqual(moveInAreaSqmResult.success, true, "moveIn should accept areaSqm without areaSize");
+
+    expectFailed(
+      await invoke(fallbackCustomer.main, {
+        action: "createOrder",
+        data: {
+          publishMode: "public",
+          serviceType: MOVE_IN,
+          city: SHANGHAI,
+          community: "\u8bd5\u70b9\u5c0f\u533a",
+          addressText: "\u4e0a\u6d77\u5e02\u8bd5\u70b9\u5c0f\u533a",
+          durationHours: 4,
+          scheduledAt: "2026-06-20 11:00",
+          contactPhone: "13800000000",
+        },
+      }),
+      "BUSINESS_ERROR",
+      "开荒保洁请填写面积后再发布",
+      "moveIn missing area on createOrder"
+    );
+
+    expectFailed(
+      await invoke(fallbackCustomer.main, {
+        action: "createOrder",
+        data: {
+          publishMode: "public",
+          serviceType: DAILY,
+          community: "\u8bd5\u70b9\u5c0f\u533a",
+          addressText: "\u8bd5\u70b9\u5c0f\u533a",
+          durationHours: 2,
+          scheduledAt: "2026-06-20 12:00",
+          contactPhone: "13800000000",
+        },
+      }),
+      "INVALID_INPUT",
+      null,
+      "fallback createOrder missing city"
+    );
+
     const result = await invoke(fallbackCustomer.main, {
       action: "createOrder",
       data: {
@@ -1129,11 +1287,67 @@ async function runPricingEngineTests() {
       },
     });
     assert.strictEqual(result.success, true);
-    assert.strictEqual(fallbackDb.data.orders[0].pricingSnapshot.generatedBy, "createOrder_fallback");
-    assert.strictEqual(fallbackDb.data.orders[0].customerPayAmount, 79);
-    assert.notStrictEqual(fallbackDb.data.orders[0].cleanerIncome, 1);
+    const fallbackOrder = fallbackDb.data.orders.find((order) => order._id === result.data.orderId);
+    assert.strictEqual(fallbackOrder.pricingSnapshot.generatedBy, "createOrder_fallback");
+    assert.strictEqual(fallbackOrder.customerPayAmount, 79);
+    assert.notStrictEqual(fallbackOrder.cleanerIncome, 1);
   } finally {
     fallbackCustomer.restore();
+  }
+
+  const responsesDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "response-pricing-order",
+        status: "waiting_confirm",
+        publishMode: "public",
+        responses: [
+          {
+            cleanerId: "cleaner-a",
+            cleanerName: "\u5f20\u5bb6\u6d01\u5e08",
+            status: "pending",
+            quotedAmount: 109,
+            platformFee: 3.27,
+            cleanerIncome: 129,
+            responseTime: "2026-06-20T00:00:00.000Z",
+          },
+          {
+            cleanerId: "cleaner-b",
+            cleanerName: "\u674e\u5bb6\u6d01\u5e08",
+            status: "pending",
+            quotedAmount: 109,
+            platformFee: 3.27,
+            cleanerIncome: 129,
+            responseTime: "2026-06-20T00:01:00.000Z",
+          },
+        ],
+      }),
+    ],
+  });
+  const responseCustomer = await loadFunction({ openid: "customer-a", db: responsesDb, env: { APP_ENV: "production" } });
+  try {
+    const detail = await invoke(responseCustomer.main, { action: "getOrderDetail", data: { orderId: "response-pricing-order" } });
+    assert.strictEqual(detail.success, true);
+    assert.strictEqual(detail.data.order.responses.length, 2, "customer should still see response list");
+    assert.strictEqual(detail.data.order.responses[0].cleanerId, "cleaner-a");
+    assert.strictEqual(detail.data.order.responses[0].status, "pending");
+    assert.strictEqual(detail.data.order.responses[0].platformFee, undefined, "customer responses should not expose platformFee");
+    assert.strictEqual(detail.data.order.responses[0].cleanerIncome, undefined, "customer responses should not expose cleanerIncome");
+    const selected = await invoke(responseCustomer.main, { action: "selectOrderResponse", data: { orderId: "response-pricing-order", cleanerId: "cleaner-a" } });
+    assert.strictEqual(selected.success, true, "customer should still be able to select cleaner from sanitized response list");
+  } finally {
+    responseCustomer.restore();
+  }
+  const responseCleaner = await loadFunction({ openid: "cleaner-b", db: responsesDb, env: { APP_ENV: "production" } });
+  try {
+    const detail = await invoke(responseCleaner.main, { action: "getOrderDetail", data: { orderId: "response-pricing-order" } });
+    assert.strictEqual(detail.success, true);
+    assert.strictEqual(detail.data.order.responses, undefined, "unselected cleaner should not see full responses");
+    assert(detail.data.order.myResponse, "responded cleaner should see own myResponse");
+    assert.strictEqual(detail.data.order.myResponse.platformFee, undefined);
+    assert.strictEqual(detail.data.order.myResponse.cleanerIncome, undefined);
+  } finally {
+    responseCleaner.restore();
   }
 
   const publicOrderContext = await loadFunction({ openid: "cleaner-b", db: lifecycleDb, env: { APP_ENV: "production" } });
@@ -2090,7 +2304,9 @@ function runStaticMiniprogramTests() {
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
   assert(orderCreateText.includes("createPricingQuote"), "order-create should request server pricing quotes");
   assert(orderCreateText.includes("quoteId"), "order-create should submit quoteId");
+  assert(orderCreateText.includes("请选择服务地址后获取报价"), "order-create should not show fallback amount without city");
   assert(/not authoritative|legacy|fallback/i.test(frontendPricingText), "miniprogram/config/pricing.js should be marked as non-authoritative fallback");
+  assert(!/createPricingQuoteRecord\(data,\s*openid/.test(cloudIndexText), "createPricingQuote public action should sanitize user pricing input");
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
   assert(orderDetailText.includes("openClaimCreate"), "order-detail should include claim create entry");
   assert(orderDetailText.includes("openExceptionReport"), "order-detail should include cleaner exception entry");
