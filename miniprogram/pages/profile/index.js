@@ -418,6 +418,10 @@ Page({
     wx.navigateTo({ url: "/pages/support/index?type=feedback" });
   },
 
+  openAfterSales() {
+    wx.navigateTo({ url: "/pages/claim-list/index" });
+  },
+
   settings() {
     const legalPages = [
       "/pages/legal/user-agreement/index",

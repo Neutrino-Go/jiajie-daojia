@@ -17,3 +17,14 @@
 | R-013 | 优惠券或拉新价压低家洁师收入 | order-create, pricing | P1 | 中 | 引入 `platformFundedDiscount`、`platformSubsidyBudget`、`cashBurn` | 否 | 产品/财务 | 使用优惠后 cleanerIncome 不下降 |
 | R-014 | 开荒保洁按小时导致亏损或服务争议 | order-create, pricing | P1 | 中 | 开荒按面积和难度加价 | 否 | 产品 | 60 平方米起步，特殊项需确认 |
 | R-015 | 多人响应和选择并发导致状态错乱 | selectOrderResponse, acceptOrder | P1 | 中 | 状态乐观锁、幂等键、重复点击保护 | 否 | 技术 | 并发选择只成功一次 |
+
+## v0.2.2 risk update
+
+| 风险编号 | 风险描述 | 影响页面/云函数 | 严重级别 | 解决方案 | 是否上线阻塞 | 验收方式 |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-016 | 售后/投诉/返工/退款/财损工单可能被非订单参与人创建或查看 | protectionClaims, claim pages | P0 | `createProtectionClaim`、`getProtectionClaimDetail`、`listMyProtectionClaims` 按订单参与人或 admin 校验 | 是 | 非参与人创建/查看返回 `FORBIDDEN` |
+| R-017 | 售后详情可能泄露订单备注、手机号、微信号、详细地址或完整 responses | getProtectionClaimDetail | P0 | claim detail 中的 order 使用 `publicOrderForViewer` 脱敏 | 是 | 云函数测试覆盖非参与/参与视角脱敏 |
+| R-018 | 退款/赔付/保险文案可能误导用户认为真实资金能力已接入 | protection pages, claim pages, order-detail | P0 | 文案固定为人工确认处理和平台规则为准，不出现“百万保障”“全额赔付”“已投保” | 是 | 静态扫描禁用文案 |
+| R-019 | 家洁师异常报备可能被其他家洁师查看 | reportCleanerException, listMyProtectionClaims | P0 | 仅被指派或已接单家洁师、订单客户、admin 可访问相关工单 | 是 | 云函数测试覆盖非参与家洁师不可报备/查看 |
+| R-020 | 微信开发者工具真实编译和人工测试本轮跳过 | miniprogram | P0 | 正式上线前必须执行人工测试清单 | 是 | 记录微信开发者工具版本、基础库版本和测试账号结果 |
+| R-021 | CloudBase 生产数据库规则和部署权限未复核 | CloudBase | P0 | 正式上线前人工复核数据库 rules、云函数权限、环境变量 | 是 | 留存复核记录 |

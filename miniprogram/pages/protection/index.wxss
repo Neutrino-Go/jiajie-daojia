@@ -1,0 +1,40 @@
+.page {
+  min-height: 100vh;
+  padding: 24rpx;
+  background: #f7f8fa;
+  box-sizing: border-box;
+}
+.section-title {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #18211d;
+  margin: 12rpx 0 20rpx;
+}
+.notice,
+.card {
+  background: #ffffff;
+  border-radius: 12rpx;
+  padding: 24rpx;
+  margin-bottom: 20rpx;
+  color: #4d5a54;
+  line-height: 1.7;
+}
+.title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #18211d;
+}
+.summary,
+.line,
+.meta,
+.empty {
+  font-size: 26rpx;
+  color: #5b6862;
+  margin-top: 10rpx;
+}
+.sub-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #26312c;
+  margin-top: 20rpx;
+}

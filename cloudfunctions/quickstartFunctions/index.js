@@ -40,10 +40,98 @@ const COLLECTIONS = [
   "adminUsers",
   "auditLogs",
   "supportTickets",
+  "serviceStandards",
+  "protectionPlans",
+  "protectionClaims",
 ];
 
 const COMMISSION_RATE = 0.05;
 const CONTACT_STATUSES = ["confirmed", "in_service", "waiting_complete", "waiting_acceptance", "completed", "auto_completed", "accepted"];
+const SERVICE_PROOF_STATUSES = ["in_service", "waiting_complete", "waiting_acceptance"];
+const CLAIM_TYPES = ["rework", "refund", "complaint", "property_damage", "cleaner_exception", "safety_risk", "other"];
+const CLAIM_STATUSES = ["submitted", "under_review", "needs_more_info", "resolved", "rejected", "cancelled"];
+const CLAIM_STATUS_TRANSITIONS = {
+  submitted: ["under_review", "needs_more_info", "resolved", "rejected", "cancelled"],
+  under_review: ["needs_more_info", "resolved", "rejected", "cancelled"],
+  needs_more_info: ["under_review", "resolved", "rejected", "cancelled"],
+  resolved: [],
+  rejected: [],
+  cancelled: [],
+};
+const DEFAULT_SERVICE_STANDARDS = [
+  {
+    _id: "standard-daily-cleaning-v1",
+    serviceType: "日常保洁",
+    title: "日常保洁服务标准",
+    includedItems: ["地面清洁", "台面擦拭", "厨卫基础清洁", "垃圾整理"],
+    excludedItems: ["高空外窗", "重度油污拆洗", "大型家具搬运", "危险物品处理"],
+    customerTips: ["请提前收纳贵重物品", "请与家洁师确认重点区域"],
+    cleanerTips: ["服务前确认范围", "服务后提交完成说明"],
+    version: "2026-06",
+    enabled: true,
+  },
+  {
+    _id: "standard-deep-cleaning-v1",
+    serviceType: "深度保洁",
+    title: "深度保洁服务标准",
+    includedItems: ["厨卫重点清洁", "地面清洁", "可触达台面擦拭"],
+    excludedItems: ["高空作业", "家电深度拆机", "危险污染物处理"],
+    customerTips: ["请提前说明重点需求", "现场超出范围项目需双方确认"],
+    cleanerTips: ["服务前拍照确认重点区域", "异常情况及时报备"],
+    version: "2026-06",
+    enabled: true,
+  },
+  {
+    _id: "standard-move-in-cleaning-v1",
+    serviceType: "开荒保洁",
+    title: "开荒保洁服务标准",
+    includedItems: ["地面清洁", "可触达台面擦拭", "厨卫基础清洁", "装修后浮尘清洁"],
+    excludedItems: ["高空作业", "危险物品处理", "装修垃圾清运", "订单未约定的额外工作"],
+    customerTips: ["请提前说明面积和重点区域", "超出订单范围的服务需双方确认"],
+    cleanerTips: ["服务前确认范围", "异常情况及时报备"],
+    version: "2026-06",
+    enabled: true,
+  },
+  {
+    _id: "standard-housework-organize-v1",
+    serviceType: "家务整理",
+    title: "家务整理服务标准",
+    includedItems: ["按订单约定整理物品", "基础归类", "可触达区域整理"],
+    excludedItems: ["贵重物品处置", "危险物品处理", "订单未约定的额外工作"],
+    customerTips: ["请提前说明整理范围", "贵重物品请自行保管"],
+    cleanerTips: ["服务前确认范围", "涉及私人物品时先征得客户确认"],
+    version: "2026-06",
+    enabled: true,
+  },
+  {
+    _id: "standard-storage-organize-v1",
+    serviceType: "收纳整理",
+    title: "收纳整理服务标准",
+    includedItems: ["按订单约定收纳整理", "基础分类", "收纳建议"],
+    excludedItems: ["贵重物品处置", "危险物品处理", "订单未约定的额外工作"],
+    customerTips: ["请提前说明重点空间", "贵重物品请自行保管"],
+    cleanerTips: ["服务前确认范围", "涉及私人物品时先征得客户确认"],
+    version: "2026-06",
+    enabled: true,
+  },
+];
+const DEFAULT_PROTECTION_PLANS = [
+  {
+    _id: "protection-trial-basic-v1",
+    planCode: "trial-basic",
+    title: "试运营服务保障",
+    summary: "不满意可提交售后申请，平台将在试运营规则下协助处理。",
+    coverageItems: ["返工协商", "投诉反馈", "财损报备", "异常情况记录"],
+    limitations: ["保障范围以实际保险合同和平台规则为准。", "当前支付能力待接入，退款/补偿需由平台人工确认处理。"],
+    afterSaleWindowHours: 72,
+    reworkAllowed: true,
+    refundAllowed: true,
+    propertyDamageReportAllowed: true,
+    insuranceStatusText: "保险能力待接入/以实际订单保障页为准",
+    version: "2026-06",
+    enabled: true,
+  },
+];
 
 function roundMoney(value) {
   return Math.round(Number(value || 0) * 100) / 100;
@@ -419,6 +507,13 @@ function canViewOrderParticipantIds(order, viewerOpenid, context = {}) {
   );
 }
 
+function canViewOrderAfterSalePrivateFields(order, viewerOpenid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order) return false;
+  if (order.customerOpenid === viewerOpenid) return true;
+  return order.acceptedCleanerOpenid === viewerOpenid && CONTACT_STATUSES.includes(order.status);
+}
+
 function visibleContact(order, openid, context = {}) {
   return canViewCustomerContact(order, openid, context);
 }
@@ -474,6 +569,18 @@ function publicOrderForViewer(order, openid, context = {}) {
     delete next.assignedCleanerOpenid;
     delete next.cleanerId;
   }
+  if (!canViewOrderAfterSalePrivateFields(order, openid, context)) {
+    delete next.activeClaimId;
+    delete next.lastClaimAt;
+    delete next.serviceProof;
+    delete next.beforePhotoUrls;
+    delete next.completionPhotoUrls;
+    delete next.completionImageUrls;
+    delete next.completionPhotos;
+    delete next.serviceProofImageUrls;
+    next.afterSaleStatus = "";
+    next.claimCount = 0;
+  }
   delete next.customerOpenid;
   delete next.responses;
   next.responseCount = responses.length;
@@ -483,6 +590,106 @@ function publicOrderForViewer(order, openid, context = {}) {
     delete next.myResponse;
   }
   return next;
+}
+
+function publicServiceStandard(standard = {}) {
+  return {
+    _id: standard._id || "",
+    serviceType: standard.serviceType || "",
+    title: standard.title || "",
+    includedItems: Array.isArray(standard.includedItems) ? standard.includedItems.slice(0, 30) : [],
+    excludedItems: Array.isArray(standard.excludedItems) ? standard.excludedItems.slice(0, 30) : [],
+    customerTips: Array.isArray(standard.customerTips) ? standard.customerTips.slice(0, 20) : [],
+    cleanerTips: Array.isArray(standard.cleanerTips) ? standard.cleanerTips.slice(0, 20) : [],
+    version: standard.version || "",
+    enabled: standard.enabled !== false,
+  };
+}
+
+function publicProtectionPlan(plan = {}) {
+  return {
+    _id: plan._id || "",
+    planCode: plan.planCode || "",
+    title: plan.title || "",
+    summary: plan.summary || "",
+    coverageItems: Array.isArray(plan.coverageItems) ? plan.coverageItems.slice(0, 30) : [],
+    limitations: Array.isArray(plan.limitations) ? plan.limitations.slice(0, 30) : [],
+    afterSaleWindowHours: Math.max(0, Number(plan.afterSaleWindowHours || 0)),
+    reworkAllowed: Boolean(plan.reworkAllowed),
+    refundAllowed: Boolean(plan.refundAllowed),
+    propertyDamageReportAllowed: Boolean(plan.propertyDamageReportAllowed),
+    insuranceStatusText: plan.insuranceStatusText || "保险能力待接入/以实际订单保障页为准",
+    version: plan.version || "",
+    enabled: plan.enabled !== false,
+  };
+}
+
+function serviceStandardSnapshot(standard = {}, serviceType = "") {
+  const publicStandard = publicServiceStandard(standard);
+  return {
+    standardId: publicStandard._id,
+    serviceType: publicStandard.serviceType || serviceType,
+    title: publicStandard.title || `${serviceType || "服务"}标准`,
+    includedItems: publicStandard.includedItems,
+    excludedItems: publicStandard.excludedItems,
+    customerTips: publicStandard.customerTips,
+    version: publicStandard.version || "2026-06",
+  };
+}
+
+function protectionPlanSnapshot(plan = {}) {
+  const publicPlan = publicProtectionPlan(plan);
+  return {
+    planId: publicPlan._id,
+    planCode: publicPlan.planCode || "trial-basic",
+    title: publicPlan.title || "试运营服务保障",
+    summary: publicPlan.summary || "不满意可提交售后申请，平台将在试运营规则下协助处理。",
+    coverageItems: publicPlan.coverageItems,
+    limitations: publicPlan.limitations.length ? publicPlan.limitations : ["保障范围以实际保险合同和平台规则为准。"],
+    afterSaleWindowHours: publicPlan.afterSaleWindowHours || 72,
+    reworkAllowed: publicPlan.reworkAllowed,
+    refundAllowed: publicPlan.refundAllowed,
+    propertyDamageReportAllowed: publicPlan.propertyDamageReportAllowed,
+    insuranceStatusText: publicPlan.insuranceStatusText,
+    version: publicPlan.version || "2026-06",
+  };
+}
+
+function fallbackServiceStandard(serviceType = "保洁服务") {
+  const type = String(serviceType || "保洁服务").trim() || "保洁服务";
+  return {
+    _id: "",
+    serviceType: type,
+    title: `${type}服务标准`,
+    includedItems: ["按订单约定范围提供服务"],
+    excludedItems: ["高空作业", "危险物品处理", "订单未约定的额外工作"],
+    customerTips: ["请提前说明重点需求", "超出订单范围的服务需双方确认"],
+    cleanerTips: ["服务前确认范围", "异常情况及时报备"],
+    version: "2026-06",
+    enabled: true,
+  };
+}
+
+async function enabledServiceStandards() {
+  const result = await db.collection("serviceStandards").where({ enabled: true }).limit(100).get().catch(() => ({ data: [] }));
+  const standards = result.data && result.data.length ? result.data : DEFAULT_SERVICE_STANDARDS;
+  return standards.filter((item) => item.enabled !== false);
+}
+
+async function enabledProtectionPlans() {
+  const result = await db.collection("protectionPlans").where({ enabled: true }).limit(100).get().catch(() => ({ data: [] }));
+  const plans = result.data && result.data.length ? result.data : DEFAULT_PROTECTION_PLANS;
+  return plans.filter((item) => item.enabled !== false);
+}
+
+async function getDefaultServiceStandard(serviceType) {
+  const standards = await enabledServiceStandards();
+  return standards.find((item) => item.serviceType === serviceType) || fallbackServiceStandard(serviceType);
+}
+
+async function getDefaultProtectionPlan() {
+  const plans = await enabledProtectionPlans();
+  return plans[0] || DEFAULT_PROTECTION_PLANS[0];
 }
 
 function customerAddressOf(profile = {}) {
@@ -642,7 +849,7 @@ async function attachReviewInfo(order) {
     ...order,
     reviewId: review._id,
     hasReview: true,
-    review,
+    review: publicOrderReview(review),
     canEditReview: canEditReview(review, now()),
   };
 }
@@ -891,6 +1098,22 @@ function decorateReviewForDisplay(review, customerProfile = null, order = null) 
     createdAt: review.createdAt || "",
     updatedAt: review.updatedAt || review.createdAt || "",
   };
+}
+
+function publicOrderReview(review = {}, options = {}) {
+  if (!review || !isManualReview(review)) return null;
+  const next = {
+    _id: review._id || "",
+    rating: Number(review.rating || 0),
+    content: review.content || "",
+    imageUrls: normalizeReviewImageUrls(review.imageUrls),
+    createdAt: review.createdAt || "",
+    updatedAt: review.updatedAt || review.createdAt || "",
+  };
+  if (options.includeServiceType) {
+    next.serviceType = review.serviceType || "";
+  }
+  return next;
 }
 
 function participantKey(customerOpenid, cleanerOpenid) {
@@ -1454,6 +1677,18 @@ async function getPlatformStats() {
   );
 }
 
+async function getServiceStandards(data = {}) {
+  const enabled = await enabledServiceStandards();
+  const matched = enabled.filter((item) => !data.serviceType || item.serviceType === data.serviceType);
+  const standards = (matched.length ? matched : data.serviceType ? [fallbackServiceStandard(data.serviceType)] : enabled).map(publicServiceStandard);
+  return ok({ standards });
+}
+
+async function getProtectionPlans() {
+  const plans = (await enabledProtectionPlans()).map(publicProtectionPlan);
+  return ok({ plans });
+}
+
 function normalizeOrderLocationSnapshot(data) {
   const source = data.locationSnapshot || data;
   return {
@@ -1643,6 +1878,8 @@ async function createOrder(data) {
 
   const createdAt = now();
   const status = data.publishMode === "assigned" ? "assigned_waiting_accept" : "waiting_response";
+  const serviceStandard = await getDefaultServiceStandard(data.serviceType);
+  const protectionPlan = await getDefaultProtectionPlan();
   const pricingSnapshot = {
     city: pricing.city,
     cityFactor: pricing.cityFactor,
@@ -1689,6 +1926,13 @@ async function createOrder(data) {
       platformFee: pricing.platformFee,
       cleanerIncome: pricing.cleanerIncome,
       pricingSnapshot,
+      protectionPlanId: protectionPlan._id || protectionPlan.planCode || "trial-basic",
+      protectionSnapshot: protectionPlanSnapshot(protectionPlan),
+      serviceStandardSnapshot: serviceStandardSnapshot(serviceStandard, data.serviceType),
+      afterSaleStatus: "",
+      activeClaimId: "",
+      claimCount: 0,
+      lastClaimAt: "",
       paymentStatus: "unpaid",
       settlementStatus: "pending",
       status,
@@ -2365,7 +2609,8 @@ async function getOrderDetail(data) {
         ? fulfillmentCustomerProfile(customerProfile)
         : publicCustomerProfile(customerProfile);
   const review = await findOne("reviews", { orderId: data.orderId });
-  const manualReview = isManualReview(review) ? { ...review, imageUrls: normalizeReviewImageUrls(review.imageUrls) } : null;
+  const manualReview = publicOrderReview(review);
+  const reviewCanEdit = isManualReview(review) ? canEditReview(review, now()) : false;
   const savedCleaner =
     isCustomer && (order.acceptedCleanerOpenid || order.assignedCleanerOpenid)
       ? await findOne("favorites", {
@@ -2374,14 +2619,14 @@ async function getOrderDetail(data) {
         })
       : null;
   const orderWithReview = manualReview
-    ? { ...order, reviewId: manualReview._id, hasReview: true, canEditReview: canEditReview(manualReview, now()) }
+    ? { ...order, reviewId: manualReview._id, hasReview: true, canEditReview: reviewCanEdit }
     : { ...order, reviewId: "", hasReview: false, canEditReview: false };
   return ok({
     order: publicOrderForViewer(orderWithReview, openid, { isAdmin: viewerIsAdmin }),
     cleaner,
     customerProfile: customerProfileForViewer,
     review: manualReview,
-    canEditReview: manualReview ? canEditReview(manualReview, now()) : false,
+    canEditReview: reviewCanEdit,
     savedCleaner: Boolean(savedCleaner),
     viewerOpenid: openid,
   });
@@ -2640,7 +2885,7 @@ async function listReceivedReviews() {
   const openid = getOpenid();
   await requireUserRole(openid, "cleaner");
   const result = await db.collection("reviews").where({ cleanerOpenid: openid }).limit(100).get();
-  return ok(result.data.filter(isManualReview).map((review) => ({ ...review, imageUrls: normalizeReviewImageUrls(review.imageUrls) })));
+  return ok(result.data.filter(isManualReview).map((review) => publicOrderReview(review, { includeServiceType: true })));
 }
 
 async function submitReview(data) {
@@ -2754,6 +2999,374 @@ async function createSupportTicket(data = {}) {
   return ok({ ticketId: result._id, status: "open" });
 }
 
+function normalizeClaimType(type) {
+  const claimType = String(type || "").trim();
+  if (!CLAIM_TYPES.includes(claimType)) {
+    throw AppError("售后类型不正确", "INVALID_INPUT");
+  }
+  return claimType;
+}
+
+function normalizeCleanerExceptionType(type) {
+  const claimType = String(type || "cleaner_exception").trim();
+  if (!["cleaner_exception", "safety_risk"].includes(claimType)) {
+    throw AppError("异常报备类型不正确", "INVALID_INPUT");
+  }
+  return claimType;
+}
+
+function normalizeClaimDescription(description) {
+  const text = String(description || "").trim();
+  if (!text) {
+    throw AppError("请填写问题描述", "INVALID_INPUT");
+  }
+  if (text.length > 1000) {
+    throw AppError("问题描述过长", "INVALID_INPUT");
+  }
+  return text;
+}
+
+function normalizeClaimImages(value) {
+  const images = Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  if (images.length > 6) {
+    throw AppError("最多上传 6 张图片", "INVALID_INPUT");
+  }
+  return images;
+}
+
+function normalizeRequestedAmount(value) {
+  if (value === undefined || value === null || value === "") return 0;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw AppError("申请金额必须为非负数", "INVALID_INPUT");
+  }
+  return roundMoney(amount);
+}
+
+function canCreateProtectionClaimForOrder(order, openid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order) return false;
+  if (order.customerOpenid === openid) return true;
+  return order.acceptedCleanerOpenid === openid && CONTACT_STATUSES.includes(order.status);
+}
+
+function canViewProtectionClaim(claim, order, openid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!claim) return false;
+  if (claim.claimantOpenid === openid) return true;
+  if (!order) return false;
+  if (order.customerOpenid === openid) return true;
+  return order.acceptedCleanerOpenid === openid && CONTACT_STATUSES.includes(order.status);
+}
+
+function canReportCleanerException(order, openid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order) return false;
+  return order.acceptedCleanerOpenid === openid || order.assignedCleanerOpenid === openid || order.cleanerId === openid;
+}
+
+function publicProtectionClaim(claim = {}) {
+  const auditTrail = Array.isArray(claim.auditTrail)
+    ? claim.auditTrail.slice(-20).map((item) => ({
+        action: item.action || "",
+        actorRole: item.actorRole || "",
+        status: item.status || "",
+        from: item.from || "",
+        to: item.to || "",
+        createdAt: item.createdAt || "",
+      }))
+    : [];
+  return {
+    _id: claim._id || "",
+    orderId: claim.orderId || "",
+    orderNo: claim.orderNo || "",
+    claimNo: claim.claimNo || "",
+    claimantRole: claim.claimantRole || "",
+    claimType: claim.claimType || "",
+    status: claim.status || "submitted",
+    description: claim.description || "",
+    imageFileIDs: Array.isArray(claim.imageFileIDs) ? claim.imageFileIDs.slice(0, 6) : [],
+    requestedAmount: Number(claim.requestedAmount || 0),
+    proposedResolution: claim.proposedResolution || "",
+    resolutionNote: claim.resolutionNote || "",
+    createdAt: claim.createdAt || "",
+    updatedAt: claim.updatedAt || "",
+    closedAt: claim.closedAt || "",
+    auditTrail,
+  };
+}
+
+async function listAllProtectionClaims() {
+  const result = await db.collection("protectionClaims").orderBy("createdAt", "desc").limit(100).get().catch(() => ({ data: [] }));
+  return result.data || [];
+}
+
+async function getProtectionClaim(claimId) {
+  if (!claimId) throw AppError("缺少售后工单 ID", "INVALID_INPUT");
+  const result = await db.collection("protectionClaims").doc(claimId).get().catch(() => ({ data: null }));
+  return result.data ? { ...result.data, _id: result.data._id || claimId } : null;
+}
+
+function nextClaimNo(existingClaims, createdAt) {
+  const dateCode = displayDateCode(createdAt);
+  const sequence = String((existingClaims || []).length + 1).padStart(4, "0");
+  return `CLM-${dateCode}-${sequence}`;
+}
+
+async function createProtectionClaimRecord({ order, actorOpenid, actorRole, claimType, description, imageFileIDs, requestedAmount, actionName }) {
+  await safeCreateCollection("protectionClaims");
+  const existingClaims = await listAllProtectionClaims();
+  const createdAt = now();
+  const claimNo = nextClaimNo(existingClaims, createdAt);
+  const auditTrail = [
+    {
+      action: "submitted",
+      actorOpenid,
+      actorRole,
+      status: "submitted",
+      createdAt,
+    },
+  ];
+  const result = await db.collection("protectionClaims").add({
+    data: {
+      orderId: order._id,
+      orderNo: order.displayOrderNo || order.orderNo || "",
+      claimNo,
+      claimantOpenid: actorOpenid,
+      claimantRole: actorRole,
+      claimType,
+      status: "submitted",
+      description,
+      imageFileIDs,
+      requestedAmount,
+      proposedResolution: "",
+      resolutionNote: "",
+      assignedAdminOpenid: "",
+      createdAt,
+      updatedAt: createdAt,
+      closedAt: "",
+      auditTrail,
+    },
+  });
+  const claimId = result._id;
+  const claimCount = Number(order.claimCount || 0) + 1;
+  await db.collection("orders").doc(order._id).update({
+    data: {
+      afterSaleStatus: "submitted",
+      activeClaimId: claimId,
+      claimCount,
+      lastClaimAt: createdAt,
+      updatedAt: createdAt,
+    },
+  });
+  await writeAuditLog({
+    actorOpenid,
+    actorRole,
+    action: actionName,
+    targetType: "protectionClaim",
+    targetId: claimId,
+    after: { orderId: order._id, claimType, status: "submitted", requestedAmount, claimCount },
+    metadata: { orderId: order._id, claimNo, claimType },
+  });
+  return { claimId, claimNo, status: "submitted" };
+}
+
+async function createProtectionClaim(data = {}) {
+  const openid = getOpenid();
+  const viewerIsAdmin = await isAdmin(openid);
+  const user = await ensureUser(openid);
+  const order = await getOrder(data.orderId);
+  if (!order) throw AppError("订单不存在");
+  if (!canCreateProtectionClaimForOrder(order, openid, { isAdmin: viewerIsAdmin })) {
+    throw AppError("无权为该订单提交售后工单", "FORBIDDEN");
+  }
+  const claimType = normalizeClaimType(data.claimType);
+  const description = normalizeClaimDescription(data.description);
+  const imageFileIDs = normalizeClaimImages(data.imageFileIDs || data.imageUrls);
+  const requestedAmount = normalizeRequestedAmount(data.requestedAmount);
+  const actorRole = viewerIsAdmin ? "admin" : user.role || user.currentRole || "";
+  return ok(
+    await createProtectionClaimRecord({
+      order,
+      actorOpenid: openid,
+      actorRole,
+      claimType,
+      description,
+      imageFileIDs,
+      requestedAmount,
+      actionName: "createProtectionClaim",
+    })
+  );
+}
+
+async function listMyProtectionClaims(data = {}) {
+  const openid = getOpenid();
+  const viewerIsAdmin = await isAdmin(openid);
+  const claims = await listAllProtectionClaims();
+  const visible = [];
+  for (const claim of claims) {
+    if (data.status && claim.status !== data.status) continue;
+    if (data.claimType && claim.claimType !== data.claimType) continue;
+    if (data.orderId && claim.orderId !== data.orderId) continue;
+    const order = await getOrder(claim.orderId).catch(() => null);
+    if (canViewProtectionClaim(claim, order, openid, { isAdmin: viewerIsAdmin })) {
+      visible.push(publicProtectionClaim(claim));
+    }
+  }
+  return ok({ claims: visible });
+}
+
+async function getProtectionClaimDetail(data = {}) {
+  const openid = getOpenid();
+  const viewerIsAdmin = await isAdmin(openid);
+  const claim =
+    (await getProtectionClaim(data.claimId || data.id).catch(() => null)) ||
+    (data.claimNo ? await findOne("protectionClaims", { claimNo: data.claimNo }).catch(() => null) : null);
+  if (!claim) throw AppError("售后工单不存在");
+  const order = await getOrder(claim.orderId).catch(() => null);
+  if (!canViewProtectionClaim(claim, order, openid, { isAdmin: viewerIsAdmin })) {
+    throw AppError("无权查看该售后工单", "FORBIDDEN");
+  }
+  return ok({
+    claim: publicProtectionClaim(claim),
+    order: order ? publicOrderForViewer(order, openid, { isAdmin: viewerIsAdmin }) : null,
+  });
+}
+
+function assertProtectionClaimStatusTransition(currentStatus, nextStatus) {
+  if (!CLAIM_STATUSES.includes(nextStatus)) {
+    throw AppError("售后状态不正确", "INVALID_STATUS");
+  }
+  const allowed = CLAIM_STATUS_TRANSITIONS[currentStatus || "submitted"] || [];
+  if (!allowed.includes(nextStatus)) {
+    throw AppError("售后状态流转不正确", "INVALID_STATUS");
+  }
+}
+
+async function updateProtectionClaimStatus(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const claim = await getProtectionClaim(data.claimId || data.id);
+  if (!claim) throw AppError("售后工单不存在");
+  const nextStatus = String(data.status || "").trim();
+  assertProtectionClaimStatusTransition(claim.status, nextStatus);
+  const updatedAt = now();
+  const terminal = ["resolved", "rejected", "cancelled"].includes(nextStatus);
+  const trailItem = {
+    action: "status_update",
+    actorOpenid: openid,
+    actorRole: "admin",
+    from: claim.status,
+    to: nextStatus,
+    createdAt: updatedAt,
+  };
+  const auditTrail = Array.isArray(claim.auditTrail) ? claim.auditTrail.concat(trailItem).slice(-50) : [trailItem];
+  await db.collection("protectionClaims").doc(claim._id).update({
+    data: {
+      status: nextStatus,
+      proposedResolution: String(data.proposedResolution || claim.proposedResolution || "").trim().slice(0, 500),
+      resolutionNote: String(data.resolutionNote || claim.resolutionNote || "").trim().slice(0, 500),
+      assignedAdminOpenid: openid,
+      updatedAt,
+      closedAt: terminal ? updatedAt : claim.closedAt || "",
+      auditTrail,
+    },
+  });
+  if (claim.orderId) {
+    const openStatuses = ["submitted", "under_review", "needs_more_info"];
+    let nextActiveClaimId = claim._id;
+    let nextAfterSaleStatus = nextStatus;
+    if (terminal) {
+      const claims = await listAllProtectionClaims();
+      const nextOpenClaim = claims.find((item) => item.orderId === claim.orderId && item._id !== claim._id && openStatuses.includes(item.status));
+      nextActiveClaimId = nextOpenClaim ? nextOpenClaim._id : "";
+      nextAfterSaleStatus = nextOpenClaim ? nextOpenClaim.status : nextStatus;
+    }
+    await db.collection("orders").doc(claim.orderId).update({
+      data: {
+        afterSaleStatus: nextAfterSaleStatus,
+        activeClaimId: nextActiveClaimId,
+        updatedAt,
+      },
+    });
+  }
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "updateProtectionClaimStatus",
+    targetType: "protectionClaim",
+    targetId: claim._id,
+    before: { status: claim.status },
+    after: { status: nextStatus },
+    metadata: { orderId: claim.orderId, claimType: claim.claimType },
+  });
+  return ok({ claimId: claim._id, status: nextStatus });
+}
+
+async function submitServiceProof(data = {}) {
+  const openid = getOpenid();
+  await requireUserRole(openid, "cleaner");
+  const order = await getOrder(data.orderId);
+  if (!order) throw AppError("订单不存在");
+  if (order.acceptedCleanerOpenid !== openid) {
+    throw AppError("无权提交该订单服务证明", "FORBIDDEN");
+  }
+  if (!SERVICE_PROOF_STATUSES.includes(order.status)) {
+    throw AppError("当前订单暂不能提交服务证明", "INVALID_STATUS");
+  }
+  const completionPhotoUrls = normalizeClaimImages(data.completionPhotoUrls || data.completionImageUrls || data.serviceProofImageUrls || []);
+  const proofNote = String((data.serviceProof && data.serviceProof.note) || data.note || "").trim().slice(0, 500);
+  const updatedAt = now();
+  const serviceProof = {
+    note: proofNote,
+    submittedBy: openid,
+    submittedAt: updatedAt,
+    photoCount: completionPhotoUrls.length,
+  };
+  await db.collection("orders").doc(order._id).update({
+    data: {
+      serviceProof,
+      completionPhotoUrls,
+      completionImageUrls: completionPhotoUrls,
+      completionPhotos: completionPhotoUrls.map((fileID) => ({ fileID, url: fileID, uploadedAt: updatedAt })),
+      updatedAt,
+    },
+  });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "cleaner",
+    action: "submitServiceProof",
+    targetType: "order",
+    targetId: order._id,
+    after: { photoCount: completionPhotoUrls.length, hasNote: Boolean(proofNote) },
+  });
+  return ok({ orderId: order._id, serviceProof });
+}
+
+async function reportCleanerException(data = {}) {
+  const openid = getOpenid();
+  await requireUserRole(openid, "cleaner");
+  const order = await getOrder(data.orderId);
+  if (!order) throw AppError("订单不存在");
+  if (!canReportCleanerException(order, openid)) {
+    throw AppError("无权为该订单报备异常", "FORBIDDEN");
+  }
+  const description = normalizeClaimDescription(data.description);
+  const imageFileIDs = normalizeClaimImages(data.imageFileIDs || data.imageUrls);
+  return ok(
+    await createProtectionClaimRecord({
+      order,
+      actorOpenid: openid,
+      actorRole: "cleaner",
+      claimType: normalizeCleanerExceptionType(data.claimType),
+      description,
+      imageFileIDs,
+      requestedAmount: 0,
+      actionName: "reportCleanerException",
+    })
+  );
+}
+
 async function autoAcceptOverdueOrders(data) {
   const openid = getOpenid();
   await requireAdmin(openid);
@@ -2790,6 +3403,8 @@ const actions = {
   setDefaultUserAddress,
   deleteUserAddress,
   getPlatformStats,
+  getServiceStandards,
+  getProtectionPlans,
   createOrder,
   listOpenOrders,
   listAssignedOrders,
@@ -2818,6 +3433,12 @@ const actions = {
   listReceivedReviews,
   submitReview,
   createSupportTicket,
+  createProtectionClaim,
+  listMyProtectionClaims,
+  getProtectionClaimDetail,
+  updateProtectionClaimStatus,
+  submitServiceProof,
+  reportCleanerException,
   autoAcceptOverdueOrders,
   migrateOrderNos,
 };

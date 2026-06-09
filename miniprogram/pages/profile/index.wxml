@@ -111,6 +111,15 @@
       </view>
       <view class="chevron">›</view>
     </view>
+    <view class="menu-row" bindtap="openAfterSales" hover-class="menu-row-hover">
+      <view class="menu-left">
+        <view class="menu-icon">
+          <image class="menu-icon-img" src="/images/profile-icons/headset.svg" mode="aspectFit"></image>
+        </view>
+        <view class="menu-text">售后与反馈</view>
+      </view>
+      <view class="chevron">›</view>
+    </view>
     <view class="menu-row" bindtap="settings" hover-class="menu-row-hover">
       <view class="menu-left">
         <view class="menu-icon menu-icon-gray">

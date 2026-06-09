@@ -42,6 +42,9 @@
         </view>
       </view>
     </view>
+    <view wx:if="{{order.afterSaleStatusText}}" class="after-sale-line">
+      {{order.afterSaleStatusText}}
+    </view>
   </view>
 
   <view class="address">{{order.displayAddress}}</view>
