@@ -386,6 +386,9 @@ function createPrivacyDB(extra = {}) {
     orders: [seedOrder()],
     favorites: [],
     reviews: [],
+    pricingRules: [],
+    pricingQuotes: [],
+    coupons: [],
     serviceStandards: [],
     protectionPlans: [],
     protectionClaims: [],
@@ -873,6 +876,276 @@ async function runOrderReviewPayloadTests() {
     assertPublicOrderReview(result.data[0], "listReceivedReviews review", { serviceType: "深度保洁" });
   } finally {
     cleaner.restore();
+  }
+}
+
+function assertNoPricingInternalFields(value, name) {
+  assertNoSensitiveKeys(
+    value,
+    [
+      "cleanerBaseIncome",
+      "cleanerIncome",
+      "platformFee",
+      "platformFeeRate",
+      "platformSubsidy",
+      "cashGrossMargin",
+      "cashBurn",
+      "marginWarning",
+      "grossMarginNote",
+      "paymentFeeEstimate",
+      "insuranceCostAllocation",
+    ],
+    name
+  );
+}
+
+async function runPricingEngineTests() {
+  const DAILY = "\u65e5\u5e38\u4fdd\u6d01";
+  const DEEP = "\u6df1\u5ea6\u4fdd\u6d01";
+  const MOVE_IN = "\u5f00\u8352\u4fdd\u6d01";
+  const ORGANIZE = "\u5bb6\u52a1\u6574\u7406";
+  const SHANGHAI = "\u4e0a\u6d77\u5e02";
+  const HANGZHOU = "\u676d\u5dde\u5e02";
+  const WUXI = "\u65e0\u9521\u5e02";
+  const HARBIN = "\u54c8\u5c14\u6ee8\u5e02";
+
+  const rulesDb = createPrivacyDB({
+    pricingRules: [
+      { _id: "disabled-rule", serviceType: DAILY, city: SHANGHAI, enabled: false, launchPrice: 1, listPrice: 2, cashBurn: 999 },
+    ],
+  });
+  const rulesCustomer = await loadFunction({ openid: "customer-a", db: rulesDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(rulesCustomer.main, { action: "getPricingRules", data: {} });
+    assert.strictEqual(result.success, true);
+    assert(result.data.rules.length > 0, "getPricingRules should return default enabled rules");
+    assert(!result.data.rules.some((rule) => rule._id === "disabled-rule"), "disabled pricing rules should not return");
+    assertNoPricingInternalFields(result.data.rules[0], "public pricing rule");
+  } finally {
+    rulesCustomer.restore();
+  }
+
+  const quoteDb = createPrivacyDB();
+  const quoteCustomer = await loadFunction({ openid: "customer-a", db: quoteDb, env: { APP_ENV: "production" } });
+  try {
+    const cases = [
+      { city: SHANGHAI, serviceType: DAILY, durationHours: 2, customerPayAmount: 79, listPrice: 98 },
+      { city: HANGZHOU, serviceType: DAILY, durationHours: 3, customerPayAmount: 109 },
+      { city: WUXI, serviceType: DAILY, durationHours: 4, customerPayAmount: 132 },
+      { city: HARBIN, serviceType: DAILY, durationHours: 5, customerPayAmount: 155 },
+      { city: SHANGHAI, serviceType: DEEP, durationHours: 3, customerPayAmount: 169 },
+      { city: HANGZHOU, serviceType: ORGANIZE, durationHours: 4, customerPayAmount: 239 },
+    ];
+    for (const item of cases) {
+      const result = await invoke(quoteCustomer.main, { action: "createPricingQuote", data: item });
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.data.quote.customerPayAmount, item.customerPayAmount, `${item.city} ${item.serviceType} ${item.durationHours}h customerPayAmount`);
+      if (item.listPrice) assert.strictEqual(result.data.quote.listPrice, item.listPrice);
+      assert(result.data.quote.quoteId, "quote should include quoteId");
+      assertNoPricingInternalFields(result.data.quote, "public pricing quote");
+    }
+
+    const shMoveIn = await invoke(quoteCustomer.main, { action: "createPricingQuote", data: { city: SHANGHAI, serviceType: MOVE_IN, areaSqm: 80, durationHours: 4 } });
+    assert.strictEqual(shMoveIn.success, true);
+    assert.strictEqual(shMoveIn.data.quote.pricingMode, "area");
+    assert.strictEqual(shMoveIn.data.quote.customerPayAmount, 472);
+    assert.strictEqual(shMoveIn.data.quote.billableAreaSqm, 80);
+
+    const harbinMoveIn = await invoke(quoteCustomer.main, { action: "createPricingQuote", data: { city: HARBIN, serviceType: MOVE_IN, areaSqm: 80, durationHours: 4 } });
+    assert.strictEqual(harbinMoveIn.success, true);
+    assert.strictEqual(harbinMoveIn.data.quote.customerPayAmount, 392);
+
+    const minArea = await invoke(quoteCustomer.main, { action: "createPricingQuote", data: { city: SHANGHAI, serviceType: MOVE_IN, areaSqm: 40, durationHours: 4 } });
+    assert.strictEqual(minArea.success, true);
+    assert.strictEqual(minArea.data.quote.actualAreaSqm, 40);
+    assert.strictEqual(minArea.data.quote.billableAreaSqm, 60);
+    assert.strictEqual(minArea.data.quote.customerPayAmount, 354);
+
+    expectFailed(
+      await invoke(quoteCustomer.main, { action: "createPricingQuote", data: { city: SHANGHAI, serviceType: MOVE_IN, durationHours: 4 } }),
+      "INVALID_INPUT",
+      null,
+      "moveIn missing areaSqm"
+    );
+
+    const subsidized = quoteDb.data.pricingQuotes.find((quote) => quote.city === SHANGHAI && quote.serviceType === "daily" && Number(quote.durationHours) === 2);
+    assert(subsidized.pricingSnapshot.cleanerIncome >= 96, "daily A group 2h cleanerIncome should be protected");
+    assert.strictEqual(subsidized.pricingSnapshot.customerPayAmount, 79);
+    assert.strictEqual(subsidized.pricingSnapshot.platformSubsidy, subsidized.pricingSnapshot.cashBurn, "platformSubsidy should equal cashBurn only");
+    assert(subsidized.pricingSnapshot.cashGrossMargin < 0, "launch price should be allowed to produce negative cash margin");
+
+    const couponQuote = await invoke(quoteCustomer.main, {
+      action: "createPricingQuote",
+      data: { city: SHANGHAI, serviceType: DAILY, durationHours: 2, couponDiscount: 20 },
+    });
+    assert.strictEqual(couponQuote.success, true);
+    const couponStored = quoteDb.data.pricingQuotes.find((quote) => quote.quoteId === couponQuote.data.quote.quoteId);
+    assert.strictEqual(couponStored.pricingSnapshot.customerPayAmount, 59);
+    assert(couponStored.pricingSnapshot.cleanerIncome >= 96, "coupon should not reduce cleanerIncome");
+  } finally {
+    quoteCustomer.restore();
+  }
+
+  const lifecycleDb = createPrivacyDB({ orders: [] });
+  const lifecycleCustomer = await loadFunction({ openid: "customer-a", db: lifecycleDb, env: { APP_ENV: "production" } });
+  let quoteId = "";
+  try {
+    const quoteResult = await invoke(lifecycleCustomer.main, {
+      action: "createPricingQuote",
+      data: { city: HANGZHOU, serviceType: DAILY, durationHours: 3 },
+    });
+    assert.strictEqual(quoteResult.success, true);
+    quoteId = quoteResult.data.quote.quoteId;
+
+    const ownQuote = await invoke(lifecycleCustomer.main, { action: "getPricingQuote", data: { quoteId } });
+    assert.strictEqual(ownQuote.success, true);
+    assert.strictEqual(ownQuote.data.quote.quoteId, quoteId);
+    assertNoPricingInternalFields(ownQuote.data.quote, "public getPricingQuote");
+
+    const orderResult = await invoke(lifecycleCustomer.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: DAILY,
+        city: HANGZHOU,
+        district: "\u897f\u6e56\u533a",
+        street: "\u6587\u4e09\u8def",
+        community: "\u68a7\u6850\u5c0f\u533a",
+        addressText: "\u676d\u5dde\u5e02\u897f\u6e56\u533a\u68a7\u6850\u5c0f\u533a",
+        durationHours: 3,
+        scheduledAt: "2026-06-20 09:00",
+        contactPhone: "13800000000",
+        areaSize: 80,
+        quoteId,
+        orderAmount: 1,
+        customerPayAmount: 1,
+        platformFee: 0,
+        cleanerIncome: 1,
+      },
+    });
+    assert.strictEqual(orderResult.success, true);
+    assert.strictEqual(lifecycleDb.data.pricingQuotes[0].status, "used");
+    assert(lifecycleDb.data.pricingQuotes[0].usedAt, "used quote should record usedAt");
+    const order = lifecycleDb.data.orders[0];
+    assert.strictEqual(order.quoteId, quoteId);
+    assert.strictEqual(order.customerPayAmount, 109);
+    assert.strictEqual(order.orderAmount, 109);
+    assert.notStrictEqual(order.cleanerIncome, 1, "createOrder should ignore client cleanerIncome");
+    assert.strictEqual(order.pricingSnapshot.quoteId, quoteId);
+    assert.strictEqual(order.pricingSnapshot.customerPayAmount, 109);
+
+    expectFailed(
+      await invoke(lifecycleCustomer.main, {
+        action: "createOrder",
+        data: {
+          publishMode: "public",
+          serviceType: DAILY,
+          city: HANGZHOU,
+          community: "\u68a7\u6850\u5c0f\u533a",
+          addressText: "\u676d\u5dde\u5e02\u897f\u6e56\u533a\u68a7\u6850\u5c0f\u533a",
+          durationHours: 3,
+          scheduledAt: "2026-06-21 09:00",
+          contactPhone: "13800000000",
+          areaSize: 80,
+          quoteId,
+        },
+      }),
+      "INVALID_INPUT",
+      null,
+      "used quote createOrder"
+    );
+  } finally {
+    lifecycleCustomer.restore();
+  }
+
+  const otherUser = await loadFunction({ openid: "customer-b", db: lifecycleDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(await invoke(otherUser.main, { action: "getPricingQuote", data: { quoteId } }), "FORBIDDEN", null, "other user getPricingQuote");
+  } finally {
+    otherUser.restore();
+  }
+
+  const expiredDb = createPrivacyDB({
+    orders: [],
+    pricingQuotes: [
+      {
+        _id: "quote-expired",
+        quoteId: "quote-expired",
+        userOpenid: "customer-a",
+        city: HANGZHOU,
+        serviceType: DAILY,
+        durationHours: 3,
+        status: "active",
+        expiresAt: "2020-01-01T00:00:00.000Z",
+        pricingSnapshot: { quoteId: "quote-expired", customerPayAmount: 109, orderAmount: 109, cleanerIncome: 129, platformFee: 0, pricingMode: "hourly" },
+      },
+    ],
+  });
+  const expiredCustomer = await loadFunction({ openid: "customer-a", db: expiredDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(expiredCustomer.main, {
+        action: "createOrder",
+        data: {
+          publishMode: "public",
+          serviceType: DAILY,
+          city: HANGZHOU,
+          community: "\u68a7\u6850\u5c0f\u533a",
+          addressText: "\u676d\u5dde\u5e02\u897f\u6e56\u533a\u68a7\u6850\u5c0f\u533a",
+          durationHours: 3,
+          scheduledAt: "2026-06-21 09:00",
+          contactPhone: "13800000000",
+          areaSize: 80,
+          quoteId: "quote-expired",
+        },
+      }),
+      "INVALID_INPUT",
+      null,
+      "expired quote createOrder"
+    );
+  } finally {
+    expiredCustomer.restore();
+  }
+
+  const fallbackDb = createPrivacyDB({ orders: [] });
+  const fallbackCustomer = await loadFunction({ openid: "customer-a", db: fallbackDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(fallbackCustomer.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: DAILY,
+        city: SHANGHAI,
+        district: "\u6d66\u4e1c\u65b0\u533a",
+        street: "\u82b1\u6728\u8857\u9053",
+        community: "\u8bd5\u70b9\u5c0f\u533a",
+        addressText: "\u4e0a\u6d77\u5e02\u6d66\u4e1c\u65b0\u533a\u8bd5\u70b9\u5c0f\u533a",
+        durationHours: 2,
+        scheduledAt: "2026-06-20 09:00",
+        contactPhone: "13800000000",
+        areaSize: 80,
+        orderAmount: 1,
+        cleanerIncome: 1,
+      },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(fallbackDb.data.orders[0].pricingSnapshot.generatedBy, "createOrder_fallback");
+    assert.strictEqual(fallbackDb.data.orders[0].customerPayAmount, 79);
+    assert.notStrictEqual(fallbackDb.data.orders[0].cleanerIncome, 1);
+  } finally {
+    fallbackCustomer.restore();
+  }
+
+  const publicOrderContext = await loadFunction({ openid: "cleaner-b", db: lifecycleDb, env: { APP_ENV: "production" } });
+  try {
+    const list = await invoke(publicOrderContext.main, { action: "listOpenOrders", data: { scope: "all" } });
+    assert.strictEqual(list.success, true);
+    if (list.data[0]) {
+      assertNoPricingInternalFields(list.data[0], "public order pricing");
+      assertNoSensitiveKeys(list.data[0], ["customerOpenid", "note", "responses"], "public order regression");
+    }
+  } finally {
+    publicOrderContext.restore();
   }
 }
 
@@ -1812,8 +2085,12 @@ function runStaticMiniprogramTests() {
   const orderCardWxml = fs.readFileSync(path.join(root, "miniprogram/components/order-card/index.wxml"), "utf8");
   const profileText = fs.readFileSync(path.join(root, "miniprogram/pages/profile/index.js"), "utf8");
   const formatText = fs.readFileSync(path.join(root, "miniprogram/utils/format.js"), "utf8");
+  const frontendPricingText = fs.readFileSync(path.join(root, "miniprogram/config/pricing.js"), "utf8");
   const cloudIndexText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/index.js"), "utf8");
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
+  assert(orderCreateText.includes("createPricingQuote"), "order-create should request server pricing quotes");
+  assert(orderCreateText.includes("quoteId"), "order-create should submit quoteId");
+  assert(/not authoritative|legacy|fallback/i.test(frontendPricingText), "miniprogram/config/pricing.js should be marked as non-authoritative fallback");
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
   assert(orderDetailText.includes("openClaimCreate"), "order-detail should include claim create entry");
   assert(orderDetailText.includes("openExceptionReport"), "order-detail should include cleaner exception entry");
@@ -1891,6 +2168,7 @@ runProductionGateTests()
   .then(runOrderViewerRegressionTests)
   .then(runCleanerPrivacyTests)
   .then(runOrderReviewPayloadTests)
+  .then(runPricingEngineTests)
   .then(runAuditLogTests)
   .then(runSupportTicketTests)
   .then(runProtectionWorkflowTests)

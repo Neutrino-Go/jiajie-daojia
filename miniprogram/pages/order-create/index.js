@@ -16,24 +16,69 @@ function formatMoney(value) {
   return Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
 }
 
+function isMoveInServiceType(serviceType) {
+  return serviceType === "\u5f00\u8352\u4fdd\u6d01" || serviceType === "moveIn";
+}
+
 function calcPricing(inputOrServiceType, durationHours) {
   const input =
     typeof inputOrServiceType === "object"
       ? inputOrServiceType || {}
       : { serviceType: inputOrServiceType, durationHours };
-  const pricing = calculateOrderPrice({
-    city: input.city || "",
-    serviceType: input.serviceType,
-    durationHours: input.durationHours,
-  });
+  try {
+    const pricing = calculateOrderPrice({
+      city: input.city || "",
+      serviceType: input.serviceType,
+      durationHours: input.durationHours,
+      areaSqm: input.areaSqm || input.areaSize,
+    });
+    const discount = Math.max(0, Number(pricing.listPrice || pricing.orderAmount || 0) - Number(pricing.orderAmount || 0));
+    return {
+      ...pricing,
+      canShowEstimate: true,
+      estimateHint: "",
+      orderAmountText: `¥${formatMoney(pricing.orderAmount)}`,
+      listPriceText: pricing.listPrice && pricing.listPrice > pricing.orderAmount ? `¥${formatMoney(pricing.listPrice)}` : "",
+      discountText: discount > 0 ? `已优惠 ¥${formatMoney(discount)}` : "",
+      platformFeeText: "",
+      cleanerIncomeText: "",
+      quoteStatusText: "本地展示仅作兜底，下单以服务端报价为准",
+      minIncomeTip: "",
+    };
+  } catch (error) {
+    return {
+      canShowEstimate: false,
+      estimateHint: isMoveInServiceType(input.serviceType) ? "开荒保洁请填写面积后获取报价" : "请完善服务信息后获取报价",
+      orderAmount: 0,
+      customerPayAmount: 0,
+      platformFee: 0,
+      cleanerIncome: 0,
+      orderAmountText: "",
+      listPriceText: "",
+      discountText: "",
+      pricingText: "",
+      quoteStatusText: "",
+      minIncomeTip: "",
+    };
+  }
+}
+
+function pricingFromQuote(quote = {}) {
+  const amount = Number(quote.customerPayAmount || 0);
+  const listPrice = Number(quote.listPrice || amount);
+  const discount = Math.max(0, listPrice - amount);
   return {
-    ...pricing,
-    canShowEstimate: true,
-    estimateHint: "",
-    orderAmountText: `¥${formatMoney(pricing.orderAmount)}`,
-    platformFeeText: `¥${formatMoney(pricing.platformFee)}`,
-    cleanerIncomeText: `¥${formatMoney(pricing.cleanerIncome)}`,
-    minIncomeTip: pricing.isMinIncomeProtected ? "已保障家洁师合理收入，价格已自动调整" : "",
+    ...quote,
+    orderAmount: amount,
+    customerPayAmount: amount,
+    canShowEstimate: amount > 0,
+    estimateHint: amount > 0 ? "" : "请重新获取报价",
+    orderAmountText: `¥${formatMoney(amount)}`,
+    listPriceText: listPrice > amount ? `¥${formatMoney(listPrice)}` : "",
+    discountText: discount > 0 ? `已优惠 ¥${formatMoney(discount)}` : "",
+    pricingText: quote.pricingText || "报价由平台服务端生成，金额单位为人民币元。",
+    quoteStatusText: quote.expiresAt ? "报价有效期约 30 分钟，下单时将使用该 quoteId" : "",
+    minIncomeTip: "",
   };
 }
 
@@ -124,6 +169,8 @@ Page({
     manualNote: "",
     estimatePrice: 138,
     pricing: calcPricing(SERVICE_TYPES[0], 3, ""),
+    pricingLoading: false,
+    isMoveInService: false,
     savedCleaners: [],
     selectedCleanerName: "请选择已收藏家洁师",
     publishMode: "public",
@@ -154,6 +201,7 @@ Page({
       commissionRate: BASE_PRICING.platformFeeRate,
       commissionCap: 0,
       pricingSnapshot: null,
+      quoteId: "",
     },
     submitting: false,
   },
@@ -236,13 +284,13 @@ Page({
       form.assignedCleanerOpenid = "";
       this.setData({ cleanerIndex: -1 });
     }
-    this.setData({ publishMode, form });
+    this.setData({ publishMode, form }, () => this.refreshPrice({ silent: true }));
   },
 
   selectService(event) {
     const serviceType = event.currentTarget.dataset.value;
-    this.setData({ "form.serviceType": serviceType });
-    this.refreshPrice();
+    this.setData({ "form.serviceType": serviceType, isMoveInService: isMoveInServiceType(serviceType) });
+    this.refreshPrice({ silent: true });
   },
 
   selectDuration(event) {
@@ -251,38 +299,71 @@ Page({
     this.refreshPrice();
   },
 
-  refreshPrice() {
+  async refreshPrice(options = {}) {
     const city = this.data.form.locationSnapshot && this.data.form.locationSnapshot.city;
-    const pricing = calcPricing({
+    const isMoveInService = isMoveInServiceType(this.data.form.serviceType);
+    const quoteInput = {
       city,
       serviceType: this.data.form.serviceType,
       durationHours: this.data.form.durationHours,
-    });
-    const pricingSnapshot = {
-      city: pricing.city,
-      cityFactor: pricing.cityFactor,
-      serviceTypeFactor: pricing.serviceTypeFactor,
-      baseHourlyPrice: pricing.baseHourlyPrice,
-      durationHours: pricing.durationHours,
-      orderAmount: pricing.orderAmount,
-      platformFee: pricing.platformFee,
-      cleanerIncome: pricing.cleanerIncome,
-      cleanerHourlyIncome: pricing.cleanerHourlyIncome,
-      minCleanerHourlyIncome: pricing.minCleanerHourlyIncome,
-      isMinIncomeProtected: pricing.isMinIncomeProtected,
-      calculatedAt: new Date().toISOString(),
+      areaSqm: this.data.form.areaSize,
+      assignedCleanerOpenid: this.data.form.assignedCleanerOpenid,
     };
-    this.setData({
-      pricing,
-      estimatePrice: pricing.orderAmount,
-      "form.estimatedPrice": pricing.orderAmount,
-      "form.orderAmount": pricing.orderAmount,
-      "form.platformFee": pricing.platformFee,
-      "form.cleanerIncome": pricing.cleanerIncome,
+    const fallback = calcPricing(quoteInput);
+    const baseUpdates = {
+      pricing: fallback,
+      pricingLoading: false,
+      isMoveInService,
+      estimatePrice: fallback.orderAmount || 0,
+      "form.estimatedPrice": fallback.orderAmount || 0,
+      "form.orderAmount": fallback.orderAmount || 0,
+      "form.customerPayAmount": fallback.customerPayAmount || fallback.orderAmount || 0,
+      "form.platformFee": "",
+      "form.cleanerIncome": "",
       "form.commissionRate": BASE_PRICING.platformFeeRate,
       "form.commissionCap": 0,
-      "form.pricingSnapshot": pricingSnapshot,
-    });
+      "form.pricingSnapshot": null,
+      "form.quoteId": "",
+    };
+    if (!city || (isMoveInService && Number(this.data.form.areaSize || 0) <= 0)) {
+      this.setData(baseUpdates);
+      return null;
+    }
+    this.setData({ ...baseUpdates, pricingLoading: true });
+    const requestId = Date.now();
+    this._pricingRequestId = requestId;
+    try {
+      const result = await callCloud("createPricingQuote", quoteInput);
+      if (this._pricingRequestId !== requestId) return null;
+      const quote = result.quote || result;
+      const pricing = pricingFromQuote(quote);
+      this.setData({
+        pricing,
+        pricingLoading: false,
+        estimatePrice: pricing.orderAmount,
+        "form.quoteId": quote.quoteId || "",
+        "form.estimatedPrice": pricing.orderAmount,
+        "form.orderAmount": pricing.orderAmount,
+        "form.customerPayAmount": pricing.customerPayAmount,
+        "form.platformFee": "",
+        "form.cleanerIncome": "",
+        "form.pricingSnapshot": null,
+      });
+      return quote;
+    } catch (error) {
+      if (!options.silent) {
+        toast(error.message || "报价获取失败，请稍后重试");
+      }
+      this.setData({
+        ...baseUpdates,
+        pricing: {
+          ...fallback,
+          canShowEstimate: false,
+          estimateHint: error.message || fallback.estimateHint || "报价获取失败，请稍后重试",
+        },
+      });
+      return null;
+    }
   },
 
   onDateChange(event) {
@@ -330,7 +411,7 @@ Page({
       cleanerIndex: index,
       "form.assignedCleanerOpenid": cleaner ? cleanerOpenidOf(cleaner) : "",
       selectedCleanerName: cleaner ? cleaner.displayName : "请选择已收藏家洁师",
-    });
+    }, () => this.refreshPrice({ silent: true }));
   },
 
   onInput(event) {
@@ -401,12 +482,8 @@ Page({
       toast("请选择服务地址");
       return false;
     }
-    if ((form.serviceType === "深度保洁" || form.serviceType === "开荒保洁") && Number(form.areaSize) <= 0) {
-      toast("请填写服务面积");
-      return false;
-    }
-    if (!form.areaSize || Number(form.areaSize) <= 0) {
-      toast("请输入服务面积");
+    if (isMoveInServiceType(form.serviceType) && Number(form.areaSize) <= 0) {
+      toast("开荒保洁请填写服务面积");
       return false;
     }
     const phone = String(form.contactPhone || "").trim();
@@ -424,11 +501,30 @@ Page({
   async submit() {
     if (this.data.submitting) return;
     if (!this.validateForm()) return;
+    if (!this.data.form.quoteId) {
+      const quote = await this.refreshPrice();
+      if (!quote || !quote.quoteId) {
+        toast("请先获取有效报价");
+        return;
+      }
+    }
     this.setData({ submitting: true });
     wx.showLoading({ title: "提交中" });
     try {
+      const {
+        estimatedPrice,
+        orderAmount,
+        customerPayAmount,
+        platformFee,
+        cleanerIncome,
+        commissionRate,
+        commissionCap,
+        pricingSnapshot,
+        ...safeForm
+      } = this.data.form;
       const payload = {
-        ...this.data.form,
+        ...safeForm,
+        quoteId: this.data.form.quoteId,
         publishMode: this.data.publishMode,
       };
       const result = await callCloud("createOrder", payload);

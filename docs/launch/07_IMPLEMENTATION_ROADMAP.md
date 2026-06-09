@@ -146,3 +146,32 @@
 - CloudBase 生产数据库规则、云函数部署权限和环境变量复核。
 - 真实微信支付、退款、结算接入。
 - 完整后台客服/理赔处理台。
+
+## v0.2.3 implementation update
+
+目标：建立服务端统一报价、报价快照、城市/服务/时长/面积规则，以及平台补贴和阿姨收入保护的最小闭环。
+
+本次范围：
+
+- 新增服务端 `pricingRules` 默认规则和 `pricingQuotes` 报价生命周期。
+- 新增 `getPricingRules`、`createPricingQuote`、`getPricingQuote`。
+- `createOrder` 使用 quoteId 校验报价归属、过期、使用状态和订单信息一致性。
+- 无 quoteId 的旧入口由服务端生成 fallback quote，并写入 `pricingSnapshot.generatedBy=createOrder_fallback`。
+- 下单页改为调用 `createPricingQuote`，提交时传 `quoteId`，本地 pricing config 仅为 UI fallback。
+- 开荒保洁按面积报价，记录 actual/billable area。
+- coupon/活动价不降低 `cleanerIncome`，现金亏损记录为 `cashBurn/platformSubsidy`。
+
+明确不做：
+
+- 不接入真实微信支付。
+- 不执行真实退款、结算或补贴打款。
+- 不做完整优惠券中心或后台价格管理系统。
+- 不大改订单主状态机。
+- 不恢复 mockPayOrder 前端入口或托管类文案。
+
+仍需上线前完成：
+
+- 微信开发者工具真实编译和人工测试。
+- CloudBase 生产数据库规则、云函数权限和部署权限复核。
+- 真实支付、退款、结算和财务 reconciliation。
+- 完整后台价格管理、优惠券发放和财务对账。

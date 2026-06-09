@@ -488,14 +488,15 @@ const harbinDaily = miniprogramPricing.calculateOrderPrice({
   serviceType: "日常保洁",
   durationHours: 3,
 });
-assert.strictEqual(shanghaiDaily.orderAmount, 166);
-assert.strictEqual(shanghaiDaily.platformFee, 8.3);
-assert.strictEqual(shanghaiDaily.cleanerIncome, 157.7);
-assert.strictEqual(shanghaiDaily.cleanerHourlyIncome, 52.57);
-assert.strictEqual(harbinDaily.orderAmount, 131);
-assert.strictEqual(harbinDaily.platformFee, 6.55);
-assert.strictEqual(harbinDaily.cleanerIncome, 124.45);
-assert.strictEqual(harbinDaily.cleanerHourlyIncome, 41.48);
+assert.strictEqual(shanghaiDaily.orderAmount, 119);
+assert.strictEqual(shanghaiDaily.listPrice, 145);
+assert.strictEqual(shanghaiDaily.platformFee, 3.57);
+assert.strictEqual(shanghaiDaily.cleanerIncome, 144);
+assert.strictEqual(shanghaiDaily.cleanerHourlyIncome, 48);
+assert.strictEqual(harbinDaily.orderAmount, 95);
+assert.strictEqual(harbinDaily.platformFee, 2.85);
+assert.strictEqual(harbinDaily.cleanerIncome, 120);
+assert.strictEqual(harbinDaily.cleanerHourlyIncome, 40);
 assert(shanghaiDaily.orderAmount > harbinDaily.orderAmount, "Shanghai daily price should be higher than Harbin");
 
 const shanghaiDeep = miniprogramPricing.calculateOrderPrice({
@@ -507,22 +508,16 @@ const shanghaiMoveIn = miniprogramPricing.calculateOrderPrice({
   city: "上海市",
   serviceType: "开荒保洁",
   durationHours: 3,
+  areaSqm: 80,
 });
 assert(shanghaiMoveIn.orderAmount > shanghaiDeep.orderAmount, "move-in cleaning should be higher than deep cleaning");
 assert(shanghaiDeep.orderAmount > shanghaiDaily.orderAmount, "deep cleaning should be higher than daily cleaning");
 
-miniprogramPricing.CITY_PRICING["低线测试市"] = {
-  city: "低线测试市",
-  avgMonthlySalary: 5000,
-  minCleanerHourlyIncome: 40,
-};
-const protectedLowCity = miniprogramPricing.calculateOrderPrice({
-  city: "低线测试市",
-  serviceType: "日常保洁",
-  durationHours: 2,
-});
-assert.strictEqual(protectedLowCity.isMinIncomeProtected, true);
-assert(protectedLowCity.cleanerHourlyIncome >= protectedLowCity.minCleanerHourlyIncome);
+assert.strictEqual(shanghaiMoveIn.pricingMode, "area");
+assert.strictEqual(shanghaiMoveIn.billableAreaSqm, 80);
+assert.strictEqual(shanghaiMoveIn.orderAmount, 472);
+assert.strictEqual(shanghaiDaily.isMinIncomeProtected, true);
+assert(shanghaiDaily.cleanerHourlyIncome >= shanghaiDaily.minCleanerHourlyIncome);
 assert.deepStrictEqual(cloudPricing.calculateOrderPrice({ city: "上海市", serviceType: "日常保洁", durationHours: 3 }), shanghaiDaily);
 
 const autoReview = buildAutoAcceptanceReview({ _id: "order-auto", acceptedCleanerOpenid: "cleaner-a" });

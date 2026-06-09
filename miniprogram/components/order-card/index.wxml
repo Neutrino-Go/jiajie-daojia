@@ -57,7 +57,7 @@
   <view class="note" wx:if="{{order.note}}">{{order.note}}</view>
 
   <view class="card-bottom {{role === 'cleaner' ? 'cleaner-bottom' : ''}}">
-    <view class="cleaner-income-block" wx:if="{{role === 'cleaner'}}">
+    <view class="cleaner-income-block" wx:if="{{role === 'cleaner' && order.showCleanerIncome}}">
       <view class="income-row">
         <text class="income-label">订单金额</text>
         <text class="income-value">{{order.priceText}}</text>
