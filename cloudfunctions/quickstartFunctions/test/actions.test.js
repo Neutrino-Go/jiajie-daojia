@@ -256,11 +256,27 @@ function assertPublicOrderSafe(order, name) {
 function assertNoAfterSalePrivateFields(order, name) {
   assertNoSensitiveKeys(
     order,
-    ["activeClaimId", "lastClaimAt", "serviceProof", "beforePhotoUrls", "completionPhotoUrls", "completionImageUrls", "completionPhotos"],
+    ["activeClaimId", "lastClaimAt", "serviceProof", "beforePhotoUrls", "completionPhotoUrls", "completionImageUrls", "completionPhotos", "serviceProofImageUrls"],
     name
   );
   assert(order.afterSaleStatus === undefined || order.afterSaleStatus === "", `${name} should not expose afterSaleStatus`);
   assert(order.claimCount === undefined || Number(order.claimCount || 0) === 0, `${name} should not expose claimCount`);
+}
+
+function assertPublicOrderReview(review, name, options = {}) {
+  assert(review, `${name} should include public review`);
+  assertNoSensitiveKeys(
+    review,
+    ["customerOpenid", "cleanerOpenid", "orderId", "source", "editCount", "internalNote", "moderationStatus"],
+    name
+  );
+  assert.strictEqual(review._id, options._id || "review-payload");
+  assert.strictEqual(review.rating, options.rating || 4.5);
+  assert.strictEqual(review.content, options.content || "review content");
+  assert.deepStrictEqual(review.imageUrls, options.imageUrls || ["cloud://review-image"]);
+  assert.strictEqual(review.createdAt, options.createdAt || "2026-05-21T10:00:00.000Z");
+  assert.strictEqual(review.updatedAt, options.updatedAt || "2026-05-22T10:00:00.000Z");
+  if (options.serviceType !== undefined) assert.strictEqual(review.serviceType, options.serviceType);
 }
 
 function seedUser(openid, role) {
@@ -801,6 +817,65 @@ async function runCleanerPrivacyTests() {
   }
 }
 
+async function runOrderReviewPayloadTests() {
+  const reviewPayload = {
+    _id: "review-payload",
+    orderId: "review-payload-order",
+    customerOpenid: "customer-a",
+    cleanerOpenid: "cleaner-a",
+    serviceType: "深度保洁",
+    rating: 4.5,
+    content: "review content",
+    imageUrls: ["cloud://review-image"],
+    source: "manual",
+    editCount: 1,
+    internalNote: "review internal note",
+    moderationStatus: "approved",
+    createdAt: "2026-05-21T10:00:00.000Z",
+    updatedAt: "2026-05-22T10:00:00.000Z",
+  };
+  const db = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "review-payload-order",
+        status: "completed",
+        paymentStatus: "settled",
+        serviceType: "深度保洁",
+      }),
+    ],
+    reviews: [reviewPayload],
+  });
+
+  const customer = await loadFunction({ openid: "customer-a", db, env: { APP_ENV: "production" } });
+  try {
+    const detail = await invoke(customer.main, { action: "getOrderDetail", data: { orderId: "review-payload-order" } });
+    assert.strictEqual(detail.success, true);
+    assertPublicOrderReview(detail.data.review, "getOrderDetail review");
+    assert.strictEqual(detail.data.order.review, undefined, "getOrderDetail order should not embed raw review");
+    assert.strictEqual(detail.data.order.reviewId, "review-payload");
+    assert.strictEqual(detail.data.order.hasReview, true);
+
+    const list = await invoke(customer.main, { action: "listMyOrders", data: {} });
+    assert.strictEqual(list.success, true);
+    assert.strictEqual(list.data.length, 1);
+    assertPublicOrderReview(list.data[0].review, "listMyOrders order.review");
+    assert.strictEqual(list.data[0].reviewId, "review-payload");
+    assert.strictEqual(list.data[0].hasReview, true);
+  } finally {
+    customer.restore();
+  }
+
+  const cleaner = await loadFunction({ openid: "cleaner-a", db, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(cleaner.main, { action: "listReceivedReviews", data: {} });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.data.length, 1);
+    assertPublicOrderReview(result.data[0], "listReceivedReviews review", { serviceType: "深度保洁" });
+  } finally {
+    cleaner.restore();
+  }
+}
+
 function assertAuditSafe(db, text) {
   const serialized = JSON.stringify(db.data.auditLogs || []);
   assert(serialized.includes(text), `audit log should include ${text}`);
@@ -1074,6 +1149,7 @@ async function runProtectionWorkflowTests() {
     completionPhotoUrls: ["cloud://complete-private"],
     completionImageUrls: ["cloud://complete-private"],
     completionPhotos: [{ fileID: "cloud://complete-private" }],
+    serviceProofImageUrls: ["cloud://legacy-proof-private"],
   });
   const afterSalePrivacyDb = createPrivacyDB({ orders: [afterSaleOrder] });
   const unselectedCleaner = await loadFunction({ openid: "cleaner-b", db: afterSalePrivacyDb, env: { APP_ENV: "production" } });
@@ -1116,6 +1192,7 @@ async function runProtectionWorkflowTests() {
     assert.strictEqual(detail.success, true);
     assert.strictEqual(detail.data.order.serviceProof.note, "private proof");
     assert.strictEqual(detail.data.order.completionPhotoUrls[0], "cloud://complete-private");
+    assert.strictEqual(detail.data.order.serviceProofImageUrls[0], "cloud://legacy-proof-private");
     assert.strictEqual(detail.data.order.afterSaleStatus, "submitted");
   } finally {
     afterSaleCustomer.restore();
@@ -1130,6 +1207,7 @@ async function runProtectionWorkflowTests() {
     assert.strictEqual(detail.success, true);
     assert.strictEqual(detail.data.order.serviceProof.note, "private proof");
     assert.strictEqual(detail.data.order.completionPhotoUrls[0], "cloud://complete-private");
+    assert.strictEqual(detail.data.order.serviceProofImageUrls[0], "cloud://legacy-proof-private");
   } finally {
     afterSaleAcceptedCleaner.restore();
   }
@@ -1163,6 +1241,7 @@ async function runProtectionWorkflowTests() {
     assert.strictEqual(detail.success, true);
     assert.strictEqual(detail.data.order.serviceProof.note, "private proof");
     assert.strictEqual(detail.data.order.completionPhotoUrls[0], "cloud://complete-private");
+    assert.strictEqual(detail.data.order.serviceProofImageUrls[0], "cloud://legacy-proof-private");
     assert.strictEqual(detail.data.order.afterSaleStatus, "submitted");
   } finally {
     waitingPaymentCustomer.restore();
@@ -1760,6 +1839,16 @@ function runStaticMiniprogramTests() {
     !/function decorateReviewForDisplay[\s\S]*?return\s*{\s*\.\.\.review/.test(cloudIndexText),
     "decorateReviewForDisplay should not spread raw review fields"
   );
+  const attachReviewInfoBlock = (cloudIndexText.match(/async function attachReviewInfo[\s\S]*?async function attachReviewInfoList/) || [""])[0];
+  assert(attachReviewInfoBlock.includes("publicOrderReview"), "attachReviewInfo should return publicOrderReview");
+  assert(!/\n\s*review,\s*\n/.test(attachReviewInfoBlock), "attachReviewInfo should not return raw review");
+  assert(
+    !/manualReview\s*=\s*isManualReview\(review\)\s*\?\s*{\s*\.\.\.review/.test(cloudIndexText),
+    "getOrderDetail should not spread raw review into manualReview"
+  );
+  const listReceivedReviewsBlock = (cloudIndexText.match(/async function listReceivedReviews[\s\S]*?async function submitReview/) || [""])[0];
+  assert(listReceivedReviewsBlock.includes("publicOrderReview"), "listReceivedReviews should return publicOrderReview");
+  assert(!/\{\s*\.\.\.review/.test(listReceivedReviewsBlock), "listReceivedReviews should not spread raw review");
 
   const { decorateOrder } = require(path.join(root, "miniprogram/utils/format.js"));
   const decorated = decorateOrder(
@@ -1801,6 +1890,7 @@ runProductionGateTests()
   .then(runCustomerPrivacyTests)
   .then(runOrderViewerRegressionTests)
   .then(runCleanerPrivacyTests)
+  .then(runOrderReviewPayloadTests)
   .then(runAuditLogTests)
   .then(runSupportTicketTests)
   .then(runProtectionWorkflowTests)

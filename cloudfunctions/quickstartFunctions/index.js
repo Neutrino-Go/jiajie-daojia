@@ -577,6 +577,7 @@ function publicOrderForViewer(order, openid, context = {}) {
     delete next.completionPhotoUrls;
     delete next.completionImageUrls;
     delete next.completionPhotos;
+    delete next.serviceProofImageUrls;
     next.afterSaleStatus = "";
     next.claimCount = 0;
   }
@@ -848,7 +849,7 @@ async function attachReviewInfo(order) {
     ...order,
     reviewId: review._id,
     hasReview: true,
-    review,
+    review: publicOrderReview(review),
     canEditReview: canEditReview(review, now()),
   };
 }
@@ -1097,6 +1098,22 @@ function decorateReviewForDisplay(review, customerProfile = null, order = null) 
     createdAt: review.createdAt || "",
     updatedAt: review.updatedAt || review.createdAt || "",
   };
+}
+
+function publicOrderReview(review = {}, options = {}) {
+  if (!review || !isManualReview(review)) return null;
+  const next = {
+    _id: review._id || "",
+    rating: Number(review.rating || 0),
+    content: review.content || "",
+    imageUrls: normalizeReviewImageUrls(review.imageUrls),
+    createdAt: review.createdAt || "",
+    updatedAt: review.updatedAt || review.createdAt || "",
+  };
+  if (options.includeServiceType) {
+    next.serviceType = review.serviceType || "";
+  }
+  return next;
 }
 
 function participantKey(customerOpenid, cleanerOpenid) {
@@ -2592,7 +2609,8 @@ async function getOrderDetail(data) {
         ? fulfillmentCustomerProfile(customerProfile)
         : publicCustomerProfile(customerProfile);
   const review = await findOne("reviews", { orderId: data.orderId });
-  const manualReview = isManualReview(review) ? { ...review, imageUrls: normalizeReviewImageUrls(review.imageUrls) } : null;
+  const manualReview = publicOrderReview(review);
+  const reviewCanEdit = isManualReview(review) ? canEditReview(review, now()) : false;
   const savedCleaner =
     isCustomer && (order.acceptedCleanerOpenid || order.assignedCleanerOpenid)
       ? await findOne("favorites", {
@@ -2601,14 +2619,14 @@ async function getOrderDetail(data) {
         })
       : null;
   const orderWithReview = manualReview
-    ? { ...order, reviewId: manualReview._id, hasReview: true, canEditReview: canEditReview(manualReview, now()) }
+    ? { ...order, reviewId: manualReview._id, hasReview: true, canEditReview: reviewCanEdit }
     : { ...order, reviewId: "", hasReview: false, canEditReview: false };
   return ok({
     order: publicOrderForViewer(orderWithReview, openid, { isAdmin: viewerIsAdmin }),
     cleaner,
     customerProfile: customerProfileForViewer,
     review: manualReview,
-    canEditReview: manualReview ? canEditReview(manualReview, now()) : false,
+    canEditReview: reviewCanEdit,
     savedCleaner: Boolean(savedCleaner),
     viewerOpenid: openid,
   });
@@ -2867,7 +2885,7 @@ async function listReceivedReviews() {
   const openid = getOpenid();
   await requireUserRole(openid, "cleaner");
   const result = await db.collection("reviews").where({ cleanerOpenid: openid }).limit(100).get();
-  return ok(result.data.filter(isManualReview).map((review) => ({ ...review, imageUrls: normalizeReviewImageUrls(review.imageUrls) })));
+  return ok(result.data.filter(isManualReview).map((review) => publicOrderReview(review, { includeServiceType: true })));
 }
 
 async function submitReview(data) {
