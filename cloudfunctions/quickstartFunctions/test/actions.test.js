@@ -1189,6 +1189,30 @@ async function runPricingEngineTests() {
       },
     });
     assert.strictEqual(locationCityResult.success, true, "locationSnapshot.city should satisfy quote city match");
+    const partialQuoteResult = await invoke(cityMismatchCustomer.main, {
+      action: "createPricingQuote",
+      data: { city: HANGZHOU, serviceType: DAILY, durationHours: 3 },
+    });
+    assert.strictEqual(partialQuoteResult.success, true);
+    const partialLocationResult = await invoke(cityMismatchCustomer.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: DAILY,
+        city: HANGZHOU,
+        locationSnapshot: { district: "\u897f\u6e56\u533a", community: "\u68a7\u6850\u5c0f\u533a", addressText: "\u676d\u5dde\u5e02\u68a7\u6850\u5c0f\u533a" },
+        community: "\u68a7\u6850\u5c0f\u533a",
+        addressText: "\u676d\u5dde\u5e02\u68a7\u6850\u5c0f\u533a",
+        durationHours: 3,
+        scheduledAt: "2026-06-23 09:00",
+        contactPhone: "13800000000",
+        quoteId: partialQuoteResult.data.quote.quoteId,
+      },
+    });
+    assert.strictEqual(partialLocationResult.success, true, "top-level city should fill partial locationSnapshot city");
+    const partialLocationOrder = cityMismatchDb.data.orders.find((order) => order._id === partialLocationResult.data.orderId);
+    assert.strictEqual(partialLocationOrder.city, HANGZHOU);
+    assert.strictEqual(partialLocationOrder.locationSnapshot.city, HANGZHOU);
   } finally {
     cityMismatchCustomer.restore();
   }
@@ -1267,6 +1291,91 @@ async function runPricingEngineTests() {
       null,
       "fallback createOrder missing city"
     );
+    assert.strictEqual(fallbackDb.data.orders.length, 2, "fallback missing city should not create order");
+
+    const tamperedCouponFallback = await invoke(fallbackCustomer.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: DAILY,
+        city: SHANGHAI,
+        district: "\u6d66\u4e1c\u65b0\u533a",
+        street: "\u82b1\u6728\u8857\u9053",
+        community: "\u8bd5\u70b9\u5c0f\u533a",
+        addressText: "\u4e0a\u6d77\u5e02\u6d66\u4e1c\u65b0\u533a\u8bd5\u70b9\u5c0f\u533a",
+        durationHours: 2,
+        scheduledAt: "2026-06-20 12:30",
+        contactPhone: "13800000000",
+        couponCode: "CLIENT_FAKE",
+        couponDiscount: 999,
+      },
+    });
+    assert.strictEqual(tamperedCouponFallback.success, true);
+    const tamperedCouponOrder = fallbackDb.data.orders.find((order) => order._id === tamperedCouponFallback.data.orderId);
+    assert.strictEqual(tamperedCouponOrder.customerPayAmount, 79, "fallback couponDiscount must not change server price");
+    assert.strictEqual(tamperedCouponOrder.pricingSnapshot.couponDiscount, 0, "fallback couponDiscount should be sanitized");
+    assert(tamperedCouponOrder.cleanerIncome >= 96, "fallback couponDiscount must not reduce cleanerIncome");
+
+    const tamperedAmountFallback = await invoke(fallbackCustomer.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: DAILY,
+        city: SHANGHAI,
+        district: "\u6d66\u4e1c\u65b0\u533a",
+        street: "\u82b1\u6728\u8857\u9053",
+        community: "\u8bd5\u70b9\u5c0f\u533a",
+        addressText: "\u4e0a\u6d77\u5e02\u6d66\u4e1c\u65b0\u533a\u8bd5\u70b9\u5c0f\u533a",
+        durationHours: 2,
+        scheduledAt: "2026-06-20 13:00",
+        contactPhone: "13800000000",
+        customerPayAmount: 1,
+        orderAmount: 1,
+        amount: 1,
+        platformFee: 999,
+        cleanerIncome: 1,
+        cleanerBaseIncome: 1,
+        platformSubsidy: 999,
+        cashGrossMargin: 999,
+        cashBurn: 0,
+      },
+    });
+    assert.strictEqual(tamperedAmountFallback.success, true);
+    const tamperedAmountOrder = fallbackDb.data.orders.find((order) => order._id === tamperedAmountFallback.data.orderId);
+    assert.strictEqual(tamperedAmountOrder.customerPayAmount, 79, "fallback should ignore client customerPayAmount/orderAmount");
+    assert.strictEqual(tamperedAmountOrder.orderAmount, 79);
+    assert.notStrictEqual(tamperedAmountOrder.cleanerIncome, 1, "fallback should ignore client cleanerIncome");
+
+    const tamperedSnapshotFallback = await invoke(fallbackCustomer.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: DAILY,
+        city: SHANGHAI,
+        district: "\u6d66\u4e1c\u65b0\u533a",
+        street: "\u82b1\u6728\u8857\u9053",
+        community: "\u8bd5\u70b9\u5c0f\u533a",
+        addressText: "\u4e0a\u6d77\u5e02\u6d66\u4e1c\u65b0\u533a\u8bd5\u70b9\u5c0f\u533a",
+        durationHours: 2,
+        scheduledAt: "2026-06-20 13:30",
+        contactPhone: "13800000000",
+        pricingSnapshot: {
+          generatedBy: "client_fake",
+          customerPayAmount: 1,
+          cleanerIncome: 1,
+          couponDiscount: 999,
+        },
+        pricingMode: "area",
+        priceRuleId: "client-fake-rule",
+        priceRuleVersion: "client-fake-version",
+      },
+    });
+    assert.strictEqual(tamperedSnapshotFallback.success, true);
+    const tamperedSnapshotOrder = fallbackDb.data.orders.find((order) => order._id === tamperedSnapshotFallback.data.orderId);
+    assert.strictEqual(tamperedSnapshotOrder.customerPayAmount, 79, "fallback should ignore client pricingSnapshot");
+    assert.strictEqual(tamperedSnapshotOrder.pricingSnapshot.generatedBy, "createOrder_fallback");
+    assert.notStrictEqual(tamperedSnapshotOrder.pricingSnapshot.generatedBy, "client_fake");
+    assert.notStrictEqual(tamperedSnapshotOrder.priceRuleVersion, "client-fake-version");
 
     const result = await invoke(fallbackCustomer.main, {
       action: "createOrder",
@@ -2307,6 +2416,10 @@ function runStaticMiniprogramTests() {
   assert(orderCreateText.includes("请选择服务地址后获取报价"), "order-create should not show fallback amount without city");
   assert(/not authoritative|legacy|fallback/i.test(frontendPricingText), "miniprogram/config/pricing.js should be marked as non-authoritative fallback");
   assert(!/createPricingQuoteRecord\(data,\s*openid/.test(cloudIndexText), "createPricingQuote public action should sanitize user pricing input");
+  const publicPricingQuoteInputBlock = (cloudIndexText.match(/function publicPricingQuoteInput[\s\S]*?function isQuoteExpired/) || [""])[0];
+  assert(publicPricingQuoteInputBlock.includes("city:"), "publicPricingQuoteInput should return a quote input whitelist");
+  assert(!/\.\.\.input/.test(publicPricingQuoteInputBlock), "publicPricingQuoteInput should not spread raw client input");
+  assert(!/createPricingQuoteRecord\(\s*{\s*\.\.\.data/.test(cloudIndexText), "createOrder fallback should not pass raw data into createPricingQuoteRecord");
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
   assert(orderDetailText.includes("openClaimCreate"), "order-detail should include claim create entry");
   assert(orderDetailText.includes("openExceptionReport"), "order-detail should include cleaner exception entry");

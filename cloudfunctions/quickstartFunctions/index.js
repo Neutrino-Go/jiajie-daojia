@@ -893,8 +893,14 @@ async function createPricingQuoteRecord(input = {}, actorOpenid, options = {}) {
 }
 
 function publicPricingQuoteInput(input = {}) {
+  const areaSqm = Number(input.areaSqm || input.areaSize || 0);
   return {
-    ...input,
+    city: String(input.city || "").trim(),
+    serviceType: input.serviceType,
+    durationHours: Number(input.durationHours || 0),
+    areaSqm,
+    areaSize: areaSqm,
+    assignedCleanerOpenid: input.assignedCleanerOpenid || "",
     couponCode: "",
     couponDiscount: 0,
   };
@@ -2008,17 +2014,19 @@ async function getPricingQuote(data = {}) {
 }
 
 function normalizeOrderLocationSnapshot(data) {
-  const source = data.locationSnapshot || data;
+  const source = data.locationSnapshot || {};
+  const latitude = latitudeOf(source);
+  const longitude = longitudeOf(source);
   return {
-    province: String(source.province || "").slice(0, 30),
-    city: String(source.city || "").slice(0, 30),
-    district: String(source.district || "").slice(0, 30),
-    street: String(source.street || "").slice(0, 40),
+    province: String(source.province || data.province || "").slice(0, 30),
+    city: String(source.city || data.city || "").slice(0, 30),
+    district: String(source.district || data.district || "").slice(0, 30),
+    street: String(source.street || data.street || "").slice(0, 40),
     community: String(source.community || data.community || "").slice(0, 40),
-    detailAddress: String(source.detailAddress || "").slice(0, 80),
+    detailAddress: String(source.detailAddress || data.detailAddress || "").slice(0, 80),
     addressText: String(source.addressText || data.addressText || "").slice(0, 120),
-    latitude: latitudeOf(source),
-    longitude: longitudeOf(source),
+    latitude: latitude ?? latitudeOf(data),
+    longitude: longitude ?? longitudeOf(data),
   };
 }
 
@@ -2183,17 +2191,18 @@ async function createOrder(data) {
   if (normalizeServiceTypeKey(data.serviceType) === "moveIn" && areaSqm <= 0) {
     throw AppError("开荒保洁请填写面积", "INVALID_INPUT");
   }
+  const quoteOrderInput = {
+    quoteId: data.quoteId || "",
+    city: locationSnapshot.city,
+    serviceType: data.serviceType,
+    durationHours: data.durationHours,
+    areaSqm,
+    areaSize: areaSqm,
+    assignedCleanerOpenid: data.assignedCleanerOpenid || "",
+  };
   const quote =
-    (await getValidQuoteForOrder({ ...data, areaSqm, locationSnapshot, city: locationSnapshot.city || data.city }, openid)) ||
-    (await createPricingQuoteRecord(
-      {
-        ...data,
-        city: locationSnapshot.city || data.city,
-        areaSqm,
-      },
-      openid,
-      { generatedBy: "createOrder_fallback" }
-    ));
+    (await getValidQuoteForOrder({ ...quoteOrderInput, locationSnapshot }, openid)) ||
+    (await createPricingQuoteRecord(publicPricingQuoteInput(quoteOrderInput), openid, { generatedBy: "createOrder_fallback" }));
   const pricingSnapshot = { ...(quote.pricingSnapshot || {}) };
   if (!pricingSnapshot.customerPayAmount && !pricingSnapshot.orderAmount) {
     throw AppError("订单金额计算失败，请检查服务类型和时长", "INVALID_INPUT");
