@@ -2410,15 +2410,22 @@ function runStaticMiniprogramTests() {
   const formatText = fs.readFileSync(path.join(root, "miniprogram/utils/format.js"), "utf8");
   const frontendPricingText = fs.readFileSync(path.join(root, "miniprogram/config/pricing.js"), "utf8");
   const cloudIndexText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/index.js"), "utf8");
+  const cloudPricingText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/pricing.js"), "utf8");
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
   assert(orderCreateText.includes("createPricingQuote"), "order-create should request server pricing quotes");
   assert(orderCreateText.includes("quoteId"), "order-create should submit quoteId");
   assert(orderCreateText.includes("请选择服务地址后获取报价"), "order-create should not show fallback amount without city");
   assert(/not authoritative|legacy|fallback/i.test(frontendPricingText), "miniprogram/config/pricing.js should be marked as non-authoritative fallback");
   assert(!/createPricingQuoteRecord\(data,\s*openid/.test(cloudIndexText), "createPricingQuote public action should sanitize user pricing input");
-  const publicPricingQuoteInputBlock = (cloudIndexText.match(/function publicPricingQuoteInput[\s\S]*?function isQuoteExpired/) || [""])[0];
-  assert(publicPricingQuoteInputBlock.includes("city:"), "publicPricingQuoteInput should return a quote input whitelist");
-  assert(!/\.\.\.input/.test(publicPricingQuoteInputBlock), "publicPricingQuoteInput should not spread raw client input");
+  assert(cloudIndexText.includes("sanitizePricingInput(data)"), "createPricingQuote should sanitize public pricing input");
+  assert(cloudIndexText.includes("sanitizePricingInput(input)"), "createPricingQuoteRecord should sanitize domain pricing input");
+  assert(cloudIndexText.includes("sanitizePricingInput({"), "createOrder fallback should construct sanitized pricing input");
+  const sanitizePricingInputBlock = (cloudPricingText.match(/function sanitizePricingInput[\s\S]*?function normalizeServiceTypeKey/) || [""])[0];
+  assert(sanitizePricingInputBlock.includes("city:"), "sanitizePricingInput should return a quote input whitelist");
+  assert(!/\.\.\.input/.test(sanitizePricingInputBlock), "sanitizePricingInput should not spread raw client input");
+  ["customerPayAmount", "orderAmount", "platformFee", "cleanerIncome", "platformSubsidy", "cashBurn"].forEach((field) => {
+    assert(new RegExp(`${field}:\\s*null`).test(sanitizePricingInputBlock), `sanitizePricingInput should null ${field}`);
+  });
   assert(!/createPricingQuoteRecord\(\s*{\s*\.\.\.data/.test(cloudIndexText), "createOrder fallback should not pass raw data into createPricingQuoteRecord");
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
   assert(orderDetailText.includes("openClaimCreate"), "order-detail should include claim create entry");

@@ -26,6 +26,7 @@ const {
   normalizeServiceTypeKey,
   publicPricingQuote,
   publicPricingRule,
+  sanitizePricingInput,
 } = require("./lib/pricing");
 
 cloud.init({
@@ -840,7 +841,8 @@ async function createPricingQuoteRecord(input = {}, actorOpenid, options = {}) {
   const quoteId = options.quoteId || pricingQuoteId(createdAt);
   const quoteNo = options.quoteNo || pricingQuoteNo(createdAt);
   const rules = await enabledPricingRules();
-  const calculated = calculateQuote(input, rules);
+  const safeInput = sanitizePricingInput(input);
+  const calculated = calculateQuote(safeInput, rules);
   const pricingSnapshot = pricingSnapshotFromQuote(calculated, {
     quoteId,
     quoteNo,
@@ -890,20 +892,6 @@ async function createPricingQuoteRecord(input = {}, actorOpenid, options = {}) {
   };
   await db.collection("pricingQuotes").add({ data: record });
   return record;
-}
-
-function publicPricingQuoteInput(input = {}) {
-  const areaSqm = Number(input.areaSqm || input.areaSize || 0);
-  return {
-    city: String(input.city || "").trim(),
-    serviceType: input.serviceType,
-    durationHours: Number(input.durationHours || 0),
-    areaSqm,
-    areaSize: areaSqm,
-    assignedCleanerOpenid: input.assignedCleanerOpenid || "",
-    couponCode: "",
-    couponDiscount: 0,
-  };
 }
 
 function isQuoteExpired(quote, checkedAt = now()) {
@@ -1998,7 +1986,7 @@ async function getPricingRules() {
 async function createPricingQuote(data = {}) {
   const openid = getOpenid();
   await requireUserRole(openid, "customer");
-  const quote = await createPricingQuoteRecord(publicPricingQuoteInput(data), openid, { generatedBy: "createPricingQuote" });
+  const quote = await createPricingQuoteRecord(sanitizePricingInput(data), openid, { generatedBy: "createPricingQuote" });
   return ok({ quote: publicPricingQuote(quote) });
 }
 
@@ -2191,7 +2179,7 @@ async function createOrder(data) {
   if (normalizeServiceTypeKey(data.serviceType) === "moveIn" && areaSqm <= 0) {
     throw AppError("开荒保洁请填写面积", "INVALID_INPUT");
   }
-  const quoteOrderInput = {
+  const quoteOrderInput = sanitizePricingInput({
     quoteId: data.quoteId || "",
     city: locationSnapshot.city,
     serviceType: data.serviceType,
@@ -2199,10 +2187,10 @@ async function createOrder(data) {
     areaSqm,
     areaSize: areaSqm,
     assignedCleanerOpenid: data.assignedCleanerOpenid || "",
-  };
+  });
   const quote =
-    (await getValidQuoteForOrder({ ...quoteOrderInput, locationSnapshot }, openid)) ||
-    (await createPricingQuoteRecord(publicPricingQuoteInput(quoteOrderInput), openid, { generatedBy: "createOrder_fallback" }));
+    (await getValidQuoteForOrder({ ...quoteOrderInput, quoteId: data.quoteId || "", locationSnapshot }, openid)) ||
+    (await createPricingQuoteRecord(quoteOrderInput, openid, { generatedBy: "createOrder_fallback" }));
   const pricingSnapshot = { ...(quote.pricingSnapshot || {}) };
   if (!pricingSnapshot.customerPayAmount && !pricingSnapshot.orderAmount) {
     throw AppError("订单金额计算失败，请检查服务类型和时长", "INVALID_INPUT");

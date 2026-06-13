@@ -110,6 +110,32 @@ function roundMoney(value) {
   return Math.round(Number(value || 0) * 100) / 100;
 }
 
+function cleanText(value, maxLength) {
+  return String(value || "")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function sanitizePricingInput(input = {}) {
+  const area = Number(input.areaSqm || input.areaSize || 0);
+  return {
+    city: cleanText(input.city, 30),
+    serviceType: input.serviceType,
+    durationHours: Number(input.durationHours || 0),
+    areaSqm: Number.isFinite(area) ? area : 0,
+    areaSize: Number.isFinite(area) ? area : 0,
+    assignedCleanerOpenid: input.assignedCleanerOpenid || "",
+    couponCode: "",
+    couponDiscount: 0,
+    customerPayAmount: null,
+    orderAmount: null,
+    platformFee: null,
+    cleanerIncome: null,
+    platformSubsidy: null,
+    cashBurn: null,
+  };
+}
+
 function normalizeServiceTypeKey(serviceType) {
   const raw = String(serviceType || "").trim();
   return SERVICE_TYPE_KEY_MAP[raw] || raw || "daily";
@@ -280,7 +306,7 @@ function assertQuoteInput(input = {}) {
   }
 
   if (serviceType === "moveIn") {
-    const areaSqm = Number(input.areaSqm || input.areaSize || 0);
+    const areaSqm = Number(input.areaSqm || 0);
     if (!Number.isFinite(areaSqm) || areaSqm <= 0) {
       throwPricingInput("\u5f00\u8352\u4fdd\u6d01\u8bf7\u586b\u5199\u9762\u79ef");
     }
@@ -294,6 +320,8 @@ function assertQuoteInput(input = {}) {
 }
 
 function calculateQuote(input = {}, rules = []) {
+  const safeInput = sanitizePricingInput(input);
+  input = safeInput;
   assertQuoteInput(input);
   const city = String(input.city || "").trim();
   const cityGroup = getCityGroup(city);
@@ -305,7 +333,7 @@ function calculateQuote(input = {}, rules = []) {
 
   let listPrice = roundMoney(rule.listPrice || rule.launchPrice);
   let launchPrice = roundMoney(rule.launchPrice || rule.listPrice);
-  const areaSqm = Number(input.areaSqm || input.areaSize || 0);
+  const areaSqm = Number(input.areaSqm || 0);
   let billableAreaSqm = 0;
   let cleanerBaseIncome = 0;
   let cleanerIncome = 0;
@@ -458,5 +486,6 @@ module.exports = {
   publicPricingQuote,
   publicPricingRule,
   roundMoney,
+  sanitizePricingInput,
   serviceTypeLabel,
 };

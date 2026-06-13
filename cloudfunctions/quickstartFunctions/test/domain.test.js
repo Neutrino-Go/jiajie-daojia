@@ -549,6 +549,53 @@ assert.strictEqual(shanghaiMoveIn.orderAmount, 472);
 assert.strictEqual(shanghaiDaily.isMinIncomeProtected, true);
 assert(shanghaiDaily.cleanerHourlyIncome >= shanghaiDaily.minCleanerHourlyIncome);
 assert.deepStrictEqual(cloudPricing.calculateOrderPrice({ city: "上海市", serviceType: "日常保洁", durationHours: 3 }), shanghaiDaily);
+const dirtyDirectQuote = cloudPricing.calculateQuote({
+  city: "\u4e0a\u6d77\u5e02",
+  serviceType: "\u65e5\u5e38\u4fdd\u6d01",
+  durationHours: 2,
+  couponCode: "CLIENT_FAKE",
+  couponDiscount: 999,
+  customerPayAmount: 1,
+  orderAmount: 1,
+  amount: 1,
+  platformFee: 999,
+  cleanerIncome: 1,
+  platformSubsidy: 999,
+  cashBurn: 0,
+  pricingSnapshot: { customerPayAmount: 1, cleanerIncome: 1 },
+});
+assert.strictEqual(dirtyDirectQuote.customerPayAmount, 79, "calculateQuote should sanitize dirty couponDiscount");
+assert.strictEqual(dirtyDirectQuote.couponDiscount, 0, "calculateQuote should not trust raw couponDiscount");
+assert(dirtyDirectQuote.cleanerIncome >= 96, "calculateQuote should keep cleaner income protected");
+const sanitizedDirectInput = cloudPricing.sanitizePricingInput({
+  city: "\u4e0a\u6d77\u5e02",
+  serviceType: "\u5f00\u8352\u4fdd\u6d01",
+  durationHours: 4,
+  areaSize: 80,
+  couponDiscount: 999,
+  customerPayAmount: 1,
+});
+assert.deepStrictEqual(sanitizedDirectInput, {
+  city: "\u4e0a\u6d77\u5e02",
+  serviceType: "\u5f00\u8352\u4fdd\u6d01",
+  durationHours: 4,
+  areaSqm: 80,
+  areaSize: 80,
+  assignedCleanerOpenid: "",
+  couponCode: "",
+  couponDiscount: 0,
+  customerPayAmount: null,
+  orderAmount: null,
+  platformFee: null,
+  cleanerIncome: null,
+  platformSubsidy: null,
+  cashBurn: null,
+});
+assert.strictEqual(
+  cloudPricing.calculateQuote({ city: "\u4e0a\u6d77\u5e02", serviceType: "\u5f00\u8352\u4fdd\u6d01", areaSqm: 80 }).customerPayAmount,
+  cloudPricing.calculateQuote({ city: "\u4e0a\u6d77\u5e02", serviceType: "\u5f00\u8352\u4fdd\u6d01", areaSize: 80 }).customerPayAmount,
+  "areaSqm and areaSize should produce the same move-in quote"
+);
 
 const autoReview = buildAutoAcceptanceReview({ _id: "order-auto", acceptedCleanerOpenid: "cleaner-a" });
 assert.strictEqual(autoReview.rating, 5);
