@@ -28,6 +28,18 @@ const {
   publicPricingRule,
   sanitizePricingInput,
 } = require("./lib/pricing");
+const {
+  applyAutoGovernance,
+  calculateBehaviorGraph,
+  calculateCleanerTrust,
+  calculateCollusionRisk,
+  calculateFraudRisk,
+  calculateOrderRisk,
+  clampScore,
+  decisionFromScore,
+  riskLevelFromScore,
+  trustLevelFromScore,
+} = require("./lib/trust-risk");
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV,
@@ -56,6 +68,8 @@ const COLLECTIONS = [
   "pricingRules",
   "pricingQuotes",
   "coupons",
+  "cleanerTrustProfile",
+  "orderRiskProfile",
 ];
 
 const COMMISSION_RATE = 0.05;
@@ -2170,6 +2184,165 @@ function publicOrderLocationFlag(order, cleanerLocation) {
   };
 }
 
+async function getCollectionData(name) {
+  const result = await db.collection(name).limit(1000).get();
+  return result.data || [];
+}
+
+function cleanerOpenidOfOrder(order = {}) {
+  return order.acceptedCleanerOpenid || order.cleanerId || order.assignedCleanerOpenid || "";
+}
+
+function orderRiskPublicFields(risk = {}) {
+  return {
+    riskScore: Number(risk.riskScore || risk.finalRiskScore || 0),
+    riskLevel: risk.riskLevel || riskLevelFromScore(risk.riskScore || risk.finalRiskScore || 0),
+    riskDecision: risk.decision || decisionFromScore(risk.riskScore || risk.finalRiskScore || 0),
+    fraudScore: Number(risk.fraudScore || 0),
+    collusionScore: Number(risk.collusionScore || 0),
+    graphScore: Number(risk.graphScore || risk.graphRiskScore || 0),
+  };
+}
+
+function shouldHideOpenOrderByRisk(risk = {}) {
+  if (!risk) return false;
+  const riskLevel = risk.riskLevel || riskLevelFromScore(risk.riskScore || 0);
+  const decision = risk.decision || risk.riskDecision || decisionFromScore(risk.riskScore || 0);
+  return ["high", "critical"].includes(riskLevel) || ["HIGH_REVIEW", "BLOCK"].includes(decision);
+}
+
+function statusTimeOf(record = {}) {
+  const value = record.updatedAt || record.createdAt || record.cancelledAt || "";
+  const parsed = value ? new Date(value) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+}
+
+function withinDays(record = {}, days) {
+  const time = statusTimeOf(record);
+  if (!time) return false;
+  return now().getTime() - time.getTime() <= days * 24 * 60 * 60 * 1000;
+}
+
+function isCleanerRelatedOrder(order = {}, cleanerId = "") {
+  if (!cleanerId) return false;
+  return (
+    order.acceptedCleanerOpenid === cleanerId ||
+    order.cleanerId === cleanerId ||
+    order.assignedCleanerOpenid === cleanerId ||
+    (Array.isArray(order.responses) && order.responses.some((response) => response.cleanerId === cleanerId))
+  );
+}
+
+async function upsertCleanerTrustProfile(cleanerId, patch = {}) {
+  const updatedAt = now();
+  const existing = await findOne("cleanerTrustProfile", { cleanerId }).catch(() => null);
+  const data = { cleanerId, ...patch, updatedAt };
+  if (existing) {
+    await db.collection("cleanerTrustProfile").doc(existing._id).update({ data });
+    return { ...existing, ...data };
+  }
+  await db.collection("cleanerTrustProfile").add({ data: { _id: `trust-${cleanerId}`, ...data } });
+  return findOne("cleanerTrustProfile", { cleanerId });
+}
+
+async function getCleanerTrustProfile(cleanerId, cleaner = null) {
+  const existing = await findOne("cleanerTrustProfile", { cleanerId }).catch(() => null);
+  if (existing) return existing;
+  const allOrders = await getCollectionData("orders").catch(() => []);
+  const relatedOrders = allOrders.filter((order) => isCleanerRelatedOrder(order, cleanerId));
+  const total = relatedOrders.length;
+  const completed = relatedOrders.filter((order) => ["completed", "auto_completed"].includes(order.status)).length;
+  const cancelled = relatedOrders.filter((order) => ["cancelled", "assigned_declined"].includes(order.status)).length;
+  const noShowCount = relatedOrders.filter((order) => order.status === "no_show" || order.noShow === true).length;
+  const claims = await getCollectionData("protectionClaims").catch(() => []);
+  const relatedOrderIds = new Set(relatedOrders.map((order) => order._id));
+  const complaintClaims = claims.filter(
+    (claim) =>
+      relatedOrderIds.has(claim.orderId) &&
+      ["complaint", "property_damage", "refund", "rework"].includes(claim.claimType)
+  );
+  const trust = calculateCleanerTrust({
+    cleanerId,
+    completionRate: total ? completed / total : 1,
+    cancellationRate: total ? cancelled / total : 0,
+    complaintRate: total ? complaintClaims.length / total : 0,
+    avgRating: cleaner ? Number(cleaner.ratingAvg || 0) || 5 : 5,
+    noShowCount,
+    lateCount: Number(cleaner && cleaner.lateCount ? cleaner.lateCount : 0),
+    disputeCount: complaintClaims.length,
+  });
+  const governed = applyAutoGovernance(trust, {
+    cancellationCount24h: relatedOrders.filter((order) => ["cancelled", "assigned_declined"].includes(order.status) && withinDays(order, 1)).length,
+    complaintCount7d: complaintClaims.filter((claim) => withinDays(claim, 7)).length,
+  });
+  return upsertCleanerTrustProfile(cleanerId, governed);
+}
+
+async function getStoredOrderRiskProfile(orderId) {
+  return findOne("orderRiskProfile", { orderId }).catch(() => null);
+}
+
+async function upsertOrderRiskProfile(orderId, risk = {}) {
+  const existing = await getStoredOrderRiskProfile(orderId);
+  const updatedAt = now();
+  const data = { orderId, ...orderRiskPublicFields(risk), updatedAt };
+  if (existing) {
+    await db.collection("orderRiskProfile").doc(existing._id).update({ data });
+    return { ...existing, ...data };
+  }
+  await db.collection("orderRiskProfile").add({ data: { _id: orderId, createdAt: updatedAt, ...data } });
+  return findOne("orderRiskProfile", { orderId });
+}
+
+async function calculateAndStoreOrderRisk(order, cleaner = null) {
+  const cleanerId = cleanerOpenidOfOrder(order) || (cleaner && cleaner._openid) || "";
+  const cleanerProfile = cleanerId ? await getCleanerTrustProfile(cleanerId, cleaner).catch(() => null) : { trustScore: 80, trustLevel: "medium" };
+  const orders = await getCollectionData("orders").catch(() => []);
+  const claims = await getCollectionData("protectionClaims").catch(() => []);
+  const graph = calculateBehaviorGraph({ orders: orders.concat(order), claims });
+  const fraud = calculateFraudRisk({ orders: orders.concat(order), claims });
+  const collusion = calculateCollusionRisk({ orders: orders.concat(order), claims });
+  const risk = calculateOrderRisk(order, cleanerProfile || {}, { trustScore: 80 }, {
+    graphRiskScore: graph.graphRiskScore,
+    fraudScore: fraud.fraudScore,
+    collusionScore: collusion.collusionScore,
+  });
+  return upsertOrderRiskProfile(order._id || order.orderId, risk);
+}
+
+async function assertRiskAllowsCleanerAction(order, cleaner, cleanerId) {
+  const trust = await getCleanerTrustProfile(cleanerId, cleaner);
+  if (trust.trustLevel === "blocked" || trust.blocked === true) {
+    throw AppError("家洁师信任状态暂不可接单", "FORBIDDEN");
+  }
+  if (trust.freezeUntil && new Date(trust.freezeUntil).getTime() > now().getTime()) {
+    throw AppError("家洁师账号已临时冻结，请等待平台复核", "FORBIDDEN");
+  }
+  const storedRisk = await getStoredOrderRiskProfile(order._id);
+  const risk = storedRisk || (await calculateAndStoreOrderRisk(order, cleaner));
+  const decision = risk.decision || risk.riskDecision || decisionFromScore(risk.riskScore || 0);
+  if (decision === "BLOCK") {
+    throw AppError("订单风险过高，暂不可接单", "FORBIDDEN");
+  }
+  if (["RESTRICT", "HIGH_REVIEW"].includes(decision)) {
+    throw AppError("订单需要平台复核后处理", "REVIEW_REQUIRED");
+  }
+  return { trust, risk };
+}
+
+async function assertCleanerAssignable(order, cleanerId, cleaner) {
+  const trust = await getCleanerTrustProfile(cleanerId, cleaner);
+  if (trust.trustLevel === "blocked" || trust.blocked === true) {
+    throw AppError("该家洁师暂不可预约", "FORBIDDEN");
+  }
+  const orders = await getCollectionData("orders").catch(() => []);
+  const collusion = calculateCollusionRisk({ orders: orders.concat({ ...order, acceptedCleanerOpenid: cleanerId, cleanerId }) });
+  if (collusion.collusionScore >= 75) {
+    throw AppError("该指派组合需要平台复核", "REVIEW_REQUIRED");
+  }
+  return true;
+}
+
 async function createOrder(data) {
   const openid = getOpenid();
   await requireUserRole(openid, "customer");
@@ -2201,6 +2374,16 @@ async function createOrder(data) {
     if (!assignedCleaner || !assignedCleaner.manualApproved || !assignedCleaner.available) {
       throw AppError("指派家洁师暂不可预约");
     }
+    await assertCleanerAssignable(
+      {
+        customerOpenid: openid,
+        assignedCleanerOpenid: data.assignedCleanerOpenid,
+        status: "assigned_waiting_accept",
+        publishMode: data.publishMode,
+      },
+      data.assignedCleanerOpenid,
+      assignedCleaner
+    );
   }
 
   const createdAt = now();
@@ -2275,7 +2458,22 @@ async function createOrder(data) {
       updatedAt: createdAt,
     },
   });
-  return ok({ orderId: result._id });
+  const risk = await calculateAndStoreOrderRisk({
+    _id: result._id,
+    customerOpenid: openid,
+    acceptedCleanerOpenid: "",
+    assignedCleanerOpenid: data.publishMode === "assigned" ? data.assignedCleanerOpenid : "",
+    cleanerId: "",
+    serviceType: data.serviceType,
+    status,
+    publishMode: data.publishMode,
+    city: locationSnapshot.city,
+    district: locationSnapshot.district,
+    createdAt,
+    updatedAt: createdAt,
+  });
+  await db.collection("orders").doc(result._id).update({ data: orderRiskPublicFields(risk) });
+  return ok({ orderId: result._id, risk: orderRiskPublicFields(risk) });
 }
 
 async function listOpenOrders(data) {
@@ -2310,6 +2508,9 @@ async function listOpenOrders(data) {
   if (scope === "nearby") {
     orders = orders.filter((order) => openOrderLocationMatch(order, cleanerLocation));
   }
+  const riskProfiles = await getCollectionData("orderRiskProfile").catch(() => []);
+  const riskByOrderId = new Map(riskProfiles.map((risk) => [risk.orderId, risk]));
+  orders = orders.filter((order) => !shouldHideOpenOrderByRisk(riskByOrderId.get(order._id) || order));
   return ok(
     orders.map((order) =>
       publicOrderForViewer(
@@ -2395,6 +2596,7 @@ async function acceptOrder(data) {
   const order = await getOrder(data.orderId);
   const cleaner = await getCleaner(openid);
   assertCleanerCanAccept(order, cleaner);
+  await assertRiskAllowsCleanerAction(order, cleaner, openid);
 
   const acceptedAt = now();
   if (order.publishMode === "public") {
@@ -2546,6 +2748,14 @@ async function declineAssignedOrder(data) {
   return ok({ orderId: data.orderId });
 }
 
+async function assignCleaner(data) {
+  return updateOrderPublishMode({
+    ...data,
+    publishMode: "assigned",
+    assignedCleanerOpenid: data.assignedCleanerOpenid || data.cleanerId || "",
+  });
+}
+
 async function updateOrderPublishMode(data) {
   const openid = getOpenid();
   await requireUserRole(openid, "customer");
@@ -2580,6 +2790,7 @@ async function updateOrderPublishMode(data) {
     if (!cleaner || !cleaner.manualApproved || !cleaner.available) {
       throw AppError("指派家洁师暂不可预约");
     }
+    await assertCleanerAssignable(order, data.assignedCleanerOpenid, cleaner);
     const favorite = await findOne("favorites", {
       customerOpenid: openid,
       cleanerOpenid: data.assignedCleanerOpenid,
@@ -2798,9 +3009,22 @@ async function listCleaners(data) {
   }
   const enriched = [];
   for (const cleaner of cleaners) {
-    enriched.push(await withCleanerStats(cleaner));
+    const cleanerId = cleaner._openid || cleaner.cleanerId || "";
+    const trust = cleanerId ? await getCleanerTrustProfile(cleanerId, cleaner).catch(() => null) : null;
+    if (trust && (trust.trustLevel === "blocked" || trust.blocked === true)) continue;
+    enriched.push({
+      cleaner: await withCleanerStats(cleaner),
+      rankingDown: Boolean(trust && (trust.rankingDown || Number(trust.trustScore || 0) < 50)),
+      trustScore: trust ? Number(trust.trustScore || 0) : 80,
+    });
   }
-  return ok(enriched);
+  enriched.sort(
+    (first, second) =>
+      Number(first.rankingDown) - Number(second.rankingDown) ||
+      second.trustScore - first.trustScore ||
+      Number(second.cleaner.ratingAvg || 0) - Number(first.cleaner.ratingAvg || 0)
+  );
+  return ok(enriched.map((item) => item.cleaner));
 }
 
 async function getCleanerDetail(data) {
@@ -3700,6 +3924,133 @@ async function reportCleanerException(data = {}) {
   );
 }
 
+async function blockCleaner(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const cleanerId = data.cleanerId || data.cleanerOpenid || "";
+  if (!cleanerId) throw AppError("缺少家洁师 ID", "INVALID_INPUT");
+  const cleaner = await getCleaner(cleanerId);
+  const before = await findOne("cleanerTrustProfile", { cleanerId }).catch(() => null);
+  const profile = await upsertCleanerTrustProfile(cleanerId, {
+    trustScore: 0,
+    trustLevel: "blocked",
+    blocked: true,
+    governanceStatus: "blocked",
+    reason: String(data.reason || "").slice(0, 120),
+  });
+  if (cleaner) {
+    await db.collection("cleaners").doc(cleaner._id).update({ data: { available: false, trustLevel: "blocked", updatedAt: now() } });
+  }
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "blockCleaner",
+    targetType: "cleanerTrustProfile",
+    targetId: cleanerId,
+    before: before ? { trustScore: before.trustScore, trustLevel: before.trustLevel } : null,
+    after: { trustScore: profile.trustScore, trustLevel: profile.trustLevel, blocked: true },
+    metadata: { reason: String(data.reason || "").slice(0, 120) },
+  });
+  return ok({ cleanerId, trustProfile: profile });
+}
+
+async function unblockCleaner(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const cleanerId = data.cleanerId || data.cleanerOpenid || "";
+  if (!cleanerId) throw AppError("缺少家洁师 ID", "INVALID_INPUT");
+  const before = await findOne("cleanerTrustProfile", { cleanerId }).catch(() => null);
+  const score = clampScore(data.score === undefined ? 60 : data.score);
+  const profile = await upsertCleanerTrustProfile(cleanerId, {
+    trustScore: score,
+    trustLevel: trustLevelFromScore(score),
+    blocked: false,
+    freezeUntil: "",
+    governanceStatus: "",
+    rankingDown: score < 50,
+    reason: String(data.reason || "").slice(0, 120),
+  });
+  const cleaner = await getCleaner(cleanerId);
+  if (cleaner) {
+    await db.collection("cleaners").doc(cleaner._id).update({ data: { available: true, trustLevel: profile.trustLevel, updatedAt: now() } });
+  }
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "unblockCleaner",
+    targetType: "cleanerTrustProfile",
+    targetId: cleanerId,
+    before: before ? { trustScore: before.trustScore, trustLevel: before.trustLevel } : null,
+    after: { trustScore: profile.trustScore, trustLevel: profile.trustLevel, blocked: false },
+    metadata: { reason: String(data.reason || "").slice(0, 120) },
+  });
+  return ok({ cleanerId, trustProfile: profile });
+}
+
+async function adjustTrustScore(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const cleanerId = data.cleanerId || data.cleanerOpenid || "";
+  if (!cleanerId) throw AppError("缺少家洁师 ID", "INVALID_INPUT");
+  const score = clampScore(data.score);
+  const before = await findOne("cleanerTrustProfile", { cleanerId }).catch(() => null);
+  const governed = applyAutoGovernance(
+    {
+      cleanerId,
+      trustScore: score,
+      trustLevel: trustLevelFromScore(score),
+      reason: String(data.reason || "").slice(0, 120),
+    },
+    {}
+  );
+  const profile = await upsertCleanerTrustProfile(cleanerId, governed);
+  const cleaner = await getCleaner(cleanerId);
+  if (cleaner && profile.trustLevel === "blocked") {
+    await db.collection("cleaners").doc(cleaner._id).update({ data: { available: false, trustLevel: "blocked", updatedAt: now() } });
+  }
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "adjustTrustScore",
+    targetType: "cleanerTrustProfile",
+    targetId: cleanerId,
+    before: before ? { trustScore: before.trustScore, trustLevel: before.trustLevel } : null,
+    after: { trustScore: profile.trustScore, trustLevel: profile.trustLevel, rankingDown: Boolean(profile.rankingDown) },
+    metadata: { reason: String(data.reason || "").slice(0, 120) },
+  });
+  return ok({ cleanerId, trustProfile: profile });
+}
+
+async function flagOrder(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const order = await getOrder(data.orderId);
+  if (!order) throw AppError("订单不存在", "INVALID_INPUT");
+  const level = ["low", "medium", "high", "critical"].includes(data.riskLevel) ? data.riskLevel : "medium";
+  const scoreByLevel = { low: 15, medium: 40, high: 65, critical: 95 };
+  const riskScore = clampScore(data.riskScore === undefined ? scoreByLevel[level] : data.riskScore);
+  const risk = await upsertOrderRiskProfile(order._id, {
+    riskScore,
+    riskLevel: level,
+    decision: decisionFromScore(riskScore),
+    fraudScore: Number(data.fraudScore || 0),
+    collusionScore: Number(data.collusionScore || 0),
+    graphScore: Number(data.graphScore || 0),
+  });
+  await db.collection("orders").doc(order._id).update({ data: orderRiskPublicFields(risk) });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "flagOrder",
+    targetType: "orderRiskProfile",
+    targetId: order._id,
+    before: { riskScore: order.riskScore || 0, riskLevel: order.riskLevel || "" },
+    after: { riskScore: risk.riskScore, riskLevel: risk.riskLevel, riskDecision: risk.riskDecision },
+    metadata: { reason: String(data.reason || "").slice(0, 120) },
+  });
+  return ok({ orderId: order._id, riskProfile: risk });
+}
+
 async function autoAcceptOverdueOrders(data) {
   const openid = getOpenid();
   await requireAdmin(openid);
@@ -3747,6 +4098,7 @@ const actions = {
   listMyOrders,
   acceptOrder,
   selectOrderResponse,
+  assignCleaner,
   mockPayOrder,
   declineAssignedOrder,
   updateOrderStatus,
@@ -3775,6 +4127,10 @@ const actions = {
   updateProtectionClaimStatus,
   submitServiceProof,
   reportCleanerException,
+  blockCleaner,
+  unblockCleaner,
+  adjustTrustScore,
+  flagOrder,
   autoAcceptOverdueOrders,
   migrateOrderNos,
 };

@@ -48,6 +48,7 @@ const {
 const session = require("../../../miniprogram/utils/session");
 const miniprogramPricing = require("../../../miniprogram/config/pricing");
 const cloudPricing = require("../lib/pricing");
+const trustRisk = require("../lib/trust-risk");
 
 function mustThrow(name, fn, message) {
   let thrown = null;
@@ -596,6 +597,60 @@ assert.strictEqual(
   cloudPricing.calculateQuote({ city: "\u4e0a\u6d77\u5e02", serviceType: "\u5f00\u8352\u4fdd\u6d01", areaSize: 80 }).customerPayAmount,
   "areaSqm and areaSize should produce the same move-in quote"
 );
+
+const decayedTrust = trustRisk.applyTrustDecay(90, 50);
+assert.strictEqual(decayedTrust, 70, "trust decay should reduce 0.5 per day and cap at 20");
+const riskyTrust = trustRisk.calculateCleanerTrust({
+  completionRate: 0.6,
+  cancellationRate: 0.35,
+  complaintRate: 0.12,
+  avgRating: 2.8,
+  noShowCount: 1,
+});
+assert.strictEqual(riskyTrust.trustScore, 15);
+assert.strictEqual(riskyTrust.trustLevel, "blocked");
+const noShowBlocked = trustRisk.calculateCleanerTrust({ completionRate: 1, cancellationRate: 0, complaintRate: 0, avgRating: 5, noShowCount: 4 });
+assert.strictEqual(noShowBlocked.trustLevel, "blocked");
+const graph = trustRisk.calculateBehaviorGraph({
+  orders: [
+    { _id: "g1", customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "cancelled" },
+    { _id: "g2", customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "cancelled" },
+    { _id: "g3", customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "confirmed" },
+    { _id: "g4", customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "completed" },
+  ],
+});
+assert(graph.graphRiskScore >= 50, "behavior graph should detect cancel-rebook loops");
+assert.strictEqual(graph.behaviorPatternType, "cancel_rebook_loop");
+const fraud = trustRisk.calculateFraudRisk({ orders: graph.pairOrders || graph.orders || [
+  { customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "cancelled" },
+  { customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "cancelled" },
+  { customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "confirmed" },
+] });
+assert(fraud.fraudScore >= 50, "fraud engine should detect repeated cancel abuse");
+const collusion = trustRisk.calculateCollusionRisk({
+  orders: [
+    { customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "completed" },
+    { customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "completed" },
+    { customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "completed" },
+    { customerOpenid: "customer-a", acceptedCleanerOpenid: "cleaner-a", status: "completed" },
+  ],
+});
+assert(collusion.collusionScore >= 60, "collusion engine should flag abnormal pairing frequency");
+assert.strictEqual(collusion.collusionPairs[0].customerOpenid, "customer-a");
+const globalRisk = trustRisk.calculateGlobalRisk(
+  { trustScore: 80 },
+  { trustScore: 20, trustLevel: "low" },
+  { graphRiskScore: 60, fraudScore: 80, collusionScore: 70 }
+);
+assert.strictEqual(globalRisk.decision, "HIGH_REVIEW");
+const governedTrust = trustRisk.applyAutoGovernance({ cleanerId: "cleaner-a", trustScore: 45 }, { cancellationCount24h: 3, complaintCount7d: 2, now: "2026-06-13T00:00:00.000Z" });
+assert.strictEqual(governedTrust.trustLevel, "low");
+assert.strictEqual(governedTrust.rankingDown, true);
+assert.strictEqual(governedTrust.reviewRequired, true);
+assert(governedTrust.freezeUntil, "auto governance should freeze repeated cancellations");
+const blockedGovernance = trustRisk.applyAutoGovernance({ cleanerId: "cleaner-a", trustScore: 25 }, {});
+assert.strictEqual(blockedGovernance.trustLevel, "blocked");
+assert.strictEqual(blockedGovernance.blocked, true);
 
 const autoReview = buildAutoAcceptanceReview({ _id: "order-auto", acceptedCleanerOpenid: "cleaner-a" });
 assert.strictEqual(autoReview.rating, 5);
