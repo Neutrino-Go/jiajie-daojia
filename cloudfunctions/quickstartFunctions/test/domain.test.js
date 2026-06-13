@@ -49,6 +49,9 @@ const session = require("../../../miniprogram/utils/session");
 const miniprogramPricing = require("../../../miniprogram/config/pricing");
 const cloudPricing = require("../lib/pricing");
 const trustRisk = require("../lib/trust-risk");
+const { normalizeRiskScores } = require("../lib/risk/riskNormalizer");
+const { createMemoryBehaviorGraphStore, detectLongTermPatterns } = require("../lib/behavior/behaviorGraphStore");
+const { calibrateDecision } = require("../lib/decision/decisionCalibrator");
 
 function mustThrow(name, fn, message) {
   let thrown = null;
@@ -643,6 +646,49 @@ const globalRisk = trustRisk.calculateGlobalRisk(
   { graphRiskScore: 60, fraudScore: 80, collusionScore: 70 }
 );
 assert.strictEqual(globalRisk.decision, "HIGH_REVIEW");
+const normalizedRisk = normalizeRiskScores({ trustScore: 120, fraudScore: 150, collusionScore: -10, graphScore: 50 });
+assert.deepStrictEqual(normalizedRisk, { trust: 1, fraud: 1, collusion: 0, graph: 0.5 });
+assert.strictEqual(calibrateDecision({ trust: 1, fraud: 0, collusion: 0, graph: 0 }).decision, "ALLOW");
+assert.strictEqual(calibrateDecision({ trust: 0, fraud: 1, collusion: 1, graph: 1 }).decision, "BLOCK");
+assert.strictEqual(calibrateDecision({ trust: 0.5, fraud: 0.5, collusion: 0.5, graph: 0.5 }).decision, "REVIEW");
+const memoryGraphStore = createMemoryBehaviorGraphStore();
+memoryGraphStore.addEdge({
+  sourceType: "user",
+  sourceId: "customer-a",
+  targetType: "cleaner",
+  targetId: "cleaner-a",
+  edgeType: "cancel",
+  orderId: "graph-order-1",
+  occurredAt: "2026-05-01T00:00:00.000Z",
+});
+memoryGraphStore.updateWeight({
+  sourceId: "customer-a",
+  targetId: "cleaner-a",
+  edgeType: "cancel",
+  delta: 2,
+  occurredAt: "2026-05-15T00:00:00.000Z",
+});
+memoryGraphStore.addEdge({
+  sourceType: "user",
+  sourceId: "customer-a",
+  targetType: "cleaner",
+  targetId: "cleaner-a",
+  edgeType: "rebook",
+  orderId: "graph-order-2",
+  occurredAt: "2026-06-01T00:00:00.000Z",
+});
+const persistedGraph = memoryGraphStore.getGraph({ sourceId: "customer-a", targetId: "cleaner-a" });
+assert.strictEqual(persistedGraph.edges.length, 2, "behavior graph store should persist pair edges");
+assert.strictEqual(persistedGraph.edges.find((edge) => edge.edgeType === "cancel").weight, 3, "updateWeight should increment edge weight");
+const longTermPattern = detectLongTermPatterns(persistedGraph);
+assert(longTermPattern.graphRiskScore >= 60, "long-term graph should detect multi-week cancel-rebook pattern");
+assert.strictEqual(longTermPattern.behaviorPatternType, "long_term_cancel_rebook_loop");
+const calibratedGlobalRisk = trustRisk.calculateGlobalRisk(
+  { trustScore: 80 },
+  { trustScore: 20, trustLevel: "low" },
+  { graphRiskScore: 60, fraudScore: 80, collusionScore: 70 }
+);
+assert.strictEqual(calibratedGlobalRisk.calibratedDecision, "HIGH_REVIEW");
 const governedTrust = trustRisk.applyAutoGovernance({ cleanerId: "cleaner-a", trustScore: 45 }, { cancellationCount24h: 3, complaintCount7d: 2, now: "2026-06-13T00:00:00.000Z" });
 assert.strictEqual(governedTrust.trustLevel, "low");
 assert.strictEqual(governedTrust.rankingDown, true);

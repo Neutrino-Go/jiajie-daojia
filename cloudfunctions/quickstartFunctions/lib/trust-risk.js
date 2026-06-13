@@ -1,3 +1,7 @@
+const { normalizeRiskScores } = require("./risk/riskNormalizer");
+const { detectLongTermPatterns } = require("./behavior/behaviorGraphStore");
+const { calibrateDecision } = require("./decision/decisionCalibrator");
+
 function clampScore(value) {
   const number = Number(value || 0);
   if (!Number.isFinite(number)) return 0;
@@ -85,6 +89,7 @@ function groupPairOrders(orders = []) {
 function calculateBehaviorGraph(input = {}) {
   const orders = Array.isArray(input.orders) ? input.orders : [];
   const claims = Array.isArray(input.claims) ? input.claims : [];
+  const graphEdges = Array.isArray(input.graphEdges) ? input.graphEdges : [];
   let graphRiskScore = 0;
   let behaviorPatternType = "normal";
   const pairSummaries = groupPairOrders(orders).map((pair) => {
@@ -108,6 +113,11 @@ function calculateBehaviorGraph(input = {}) {
       behaviorPatternType = behaviorPatternType === "normal" ? "repeated_claim_cluster" : behaviorPatternType;
     }
   }
+  const longTermPattern = detectLongTermPatterns({ edges: graphEdges });
+  if (longTermPattern.graphRiskScore > graphRiskScore) {
+    graphRiskScore = longTermPattern.graphRiskScore;
+    behaviorPatternType = longTermPattern.behaviorPatternType;
+  }
 
   return {
     graphRiskScore: clampScore(graphRiskScore),
@@ -115,6 +125,8 @@ function calculateBehaviorGraph(input = {}) {
     behaviorPatternType,
     pairSummaries,
     pairOrders: orders,
+    graphEdges,
+    longTermPattern,
     orders,
   };
 }
@@ -206,24 +218,32 @@ function riskLevelFromScore(score) {
 }
 
 function calculateGlobalRisk(user = {}, cleaner = {}, orderGraph = {}) {
-  const userTrustPenalty = 100 - clampScore(user.trustScore ?? 80);
-  const cleanerTrustPenalty = 100 - clampScore(cleaner.trustScore ?? 80);
+  const userTrustScore = clampScore(user.trustScore ?? 80);
+  const cleanerTrustScore = clampScore(cleaner.trustScore ?? 80);
   const graphScore = clampScore(orderGraph.graphRiskScore ?? orderGraph.graphScore ?? 0);
   const fraudScore = clampScore(orderGraph.fraudScore ?? 0);
   const collusionScore = clampScore(orderGraph.collusionScore ?? 0);
-  let finalRiskScore = Math.max(graphScore, fraudScore, collusionScore);
-  if (userTrustPenalty >= 50) finalRiskScore = Math.max(finalRiskScore, userTrustPenalty);
+  const trustScore = Math.min(userTrustScore, cleanerTrustScore);
+  const normalizedRisk = normalizeRiskScores({ trustScore, fraudScore, collusionScore, graphScore });
+  const calibrated = calibrateDecision(normalizedRisk);
+  let finalRiskScore = calibrated.riskScore;
   if (cleaner.trustLevel === "blocked") finalRiskScore = 100;
-  else if (cleanerTrustPenalty >= 50) finalRiskScore = Math.max(finalRiskScore, cleanerTrustPenalty);
   finalRiskScore = clampScore(finalRiskScore);
+  const decision = cleaner.trustLevel === "blocked" ? "BLOCK" : calibrateDecision({
+    ...normalizedRisk,
+    graph: graphScore / 100,
+  }).decision;
   return {
     finalRiskScore,
     riskScore: finalRiskScore,
-    decision: decisionFromScore(finalRiskScore),
+    decision,
+    calibratedDecision: decision,
     riskLevel: riskLevelFromScore(finalRiskScore),
     graphScore,
     fraudScore,
     collusionScore,
+    normalizedRisk,
+    weightedRisk: calibrated.weightedRisk,
   };
 }
 
@@ -297,7 +317,9 @@ module.exports = {
   calculateGlobalRisk,
   calculateOrderRisk,
   clampScore,
+  calibrateDecision,
   decisionFromScore,
+  normalizeRiskScores,
   riskLevelFromScore,
   trustLevelFromScore,
 };

@@ -40,6 +40,7 @@ const {
   riskLevelFromScore,
   trustLevelFromScore,
 } = require("./lib/trust-risk");
+const { createBehaviorGraphStore } = require("./lib/behavior/behaviorGraphStore");
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV,
@@ -70,6 +71,7 @@ const COLLECTIONS = [
   "coupons",
   "cleanerTrustProfile",
   "orderRiskProfile",
+  "behaviorGraphEdges",
 ];
 
 const COMMISSION_RATE = 0.05;
@@ -2189,6 +2191,19 @@ async function getCollectionData(name) {
   return result.data || [];
 }
 
+async function recordBehaviorGraphEdge(edge = {}) {
+  await safeCreateCollection("behaviorGraphEdges");
+  const store = createBehaviorGraphStore(db, { now });
+  return store.addEdge(edge);
+}
+
+async function getPersistedBehaviorGraph(order = {}, cleanerId = "") {
+  const store = createBehaviorGraphStore(db, { now });
+  const sourceId = order.customerOpenid || order.userOpenid || "";
+  if (!sourceId && !cleanerId) return { edges: [] };
+  return store.getGraph(cleanerId ? { sourceId, targetId: cleanerId } : { sourceId });
+}
+
 function cleanerOpenidOfOrder(order = {}) {
   return order.acceptedCleanerOpenid || order.cleanerId || order.assignedCleanerOpenid || "";
 }
@@ -2299,7 +2314,8 @@ async function calculateAndStoreOrderRisk(order, cleaner = null) {
   const cleanerProfile = cleanerId ? await getCleanerTrustProfile(cleanerId, cleaner).catch(() => null) : { trustScore: 80, trustLevel: "medium" };
   const orders = await getCollectionData("orders").catch(() => []);
   const claims = await getCollectionData("protectionClaims").catch(() => []);
-  const graph = calculateBehaviorGraph({ orders: orders.concat(order), claims });
+  const persistedGraph = await getPersistedBehaviorGraph(order, cleanerId).catch(() => ({ edges: [] }));
+  const graph = calculateBehaviorGraph({ orders: orders.concat(order), claims, graphEdges: persistedGraph.edges || [] });
   const fraud = calculateFraudRisk({ orders: orders.concat(order), claims });
   const collusion = calculateCollusionRisk({ orders: orders.concat(order), claims });
   const risk = calculateOrderRisk(order, cleanerProfile || {}, { trustScore: 80 }, {
@@ -2457,6 +2473,16 @@ async function createOrder(data) {
       createdAt,
       updatedAt: createdAt,
     },
+  });
+  await recordBehaviorGraphEdge({
+    sourceType: "user",
+    sourceId: openid,
+    targetType: "order",
+    targetId: result._id,
+    edgeType: "order_created",
+    orderId: result._id,
+    occurredAt: createdAt,
+    metadata: { serviceType: data.serviceType, publishMode: data.publishMode },
   });
   const risk = await calculateAndStoreOrderRisk({
     _id: result._id,
@@ -2627,6 +2653,16 @@ async function acceptOrder(data) {
         updatedAt: acceptedAt,
       },
     });
+    await recordBehaviorGraphEdge({
+      sourceType: "user",
+      sourceId: order.customerOpenid,
+      targetType: "cleaner",
+      targetId: openid,
+      edgeType: "order_response",
+      orderId: data.orderId,
+      occurredAt: acceptedAt,
+      metadata: { publishMode: order.publishMode, status: "waiting_confirm" },
+    });
     return ok({ orderId: data.orderId, status: "waiting_confirm" });
   }
 
@@ -2639,6 +2675,16 @@ async function acceptOrder(data) {
       acceptedAt,
       updatedAt: acceptedAt,
     },
+  });
+  await recordBehaviorGraphEdge({
+    sourceType: "user",
+    sourceId: order.customerOpenid,
+    targetType: "cleaner",
+    targetId: openid,
+    edgeType: "assigned_accept",
+    orderId: data.orderId,
+    occurredAt: acceptedAt,
+    metadata: { publishMode: order.publishMode, status: "waiting_payment" },
   });
   return ok({ orderId: data.orderId, status: "waiting_payment", paymentStatus: "pending_pay" });
 }
@@ -2804,6 +2850,18 @@ async function updateOrderPublishMode(data) {
   }
 
   await db.collection("orders").doc(data.orderId).update({ data: updateData });
+  if (data.publishMode === "assigned") {
+    await recordBehaviorGraphEdge({
+      sourceType: "user",
+      sourceId: order.customerOpenid,
+      targetType: "cleaner",
+      targetId: data.assignedCleanerOpenid,
+      edgeType: "order_assigned",
+      orderId: data.orderId,
+      occurredAt: updateData.updatedAt,
+      metadata: { status: "assigned_waiting_accept" },
+    });
+  }
   return ok({ orderId: data.orderId, publishMode: data.publishMode });
 }
 
@@ -3724,6 +3782,17 @@ async function createProtectionClaimRecord({ order, actorOpenid, actorRole, clai
     targetId: claimId,
     after: { orderId: order._id, claimType, status: "submitted", requestedAmount, claimCount },
     metadata: { orderId: order._id, claimNo, claimType },
+  });
+  await recordBehaviorGraphEdge({
+    sourceType: actorRole || "user",
+    sourceId: actorOpenid,
+    targetType: "order",
+    targetId: order._id,
+    edgeType: "claim_submitted",
+    orderId: order._id,
+    claimId,
+    occurredAt: createdAt,
+    metadata: { claimType, actionName },
   });
   return { claimId, claimNo, status: "submitted" };
 }

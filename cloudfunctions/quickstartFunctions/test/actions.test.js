@@ -2473,8 +2473,39 @@ async function runTrustRiskWorkflowTests() {
     assert.strictEqual(typeof order.riskScore, "number");
     assert(order.riskLevel, "order should store riskLevel");
     assert(createRiskDb.data.orderRiskProfile.some((item) => item.orderId === result.data.orderId), "createOrder should write orderRiskProfile");
+    assert(
+      createRiskDb.data.behaviorGraphEdges.some((edge) => edge.orderId === result.data.orderId && edge.edgeType === "order_created"),
+      "createOrder should persist an order_created behavior graph edge"
+    );
   } finally {
     createCustomer.restore();
+  }
+
+  const graphAcceptDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "risk-graph-accept-order",
+        publishMode: "public",
+        status: "waiting_response",
+        acceptedCleanerOpenid: "",
+        cleanerId: "",
+        responses: [],
+      }),
+    ],
+    orderRiskProfile: [
+      { _id: "risk-graph-accept-order", orderId: "risk-graph-accept-order", riskScore: 10, riskLevel: "low", decision: "ALLOW" },
+    ],
+  });
+  const graphAcceptCleaner = await loadFunction({ openid: "cleaner-a", db: graphAcceptDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(graphAcceptCleaner.main, { action: "acceptOrder", data: { orderId: "risk-graph-accept-order" } });
+    assert.strictEqual(result.success, true);
+    assert(
+      graphAcceptDb.data.behaviorGraphEdges.some((edge) => edge.orderId === "risk-graph-accept-order" && edge.edgeType === "order_response"),
+      "acceptOrder should persist an order_response behavior graph edge"
+    );
+  } finally {
+    graphAcceptCleaner.restore();
   }
 
   const rankingDb = createPrivacyDB({
@@ -2568,6 +2599,10 @@ function runStaticMiniprogramTests() {
   const cloudIndexText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/index.js"), "utf8");
   const cloudPricingText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/pricing.js"), "utf8");
   const trustRiskText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/trust-risk.js"), "utf8");
+  const riskNormalizerText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/risk/riskNormalizer.js"), "utf8");
+  const behaviorGraphStoreText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/behavior/behaviorGraphStore.js"), "utf8");
+  const decisionCalibratorText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/decision/decisionCalibrator.js"), "utf8");
+  const v024QaText = fs.readFileSync(path.join(root, "docs/qa/v0.2.4-wechat-manual-test-checklist.md"), "utf8");
   assert(fs.existsSync(path.join(root, "docs/qa/v0.2.4-wechat-manual-test-checklist.md")), "v0.2.4 manual QA checklist should exist");
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
   assert(orderCreateText.includes("createPricingQuote"), "order-create should request server pricing quotes");
@@ -2593,6 +2628,13 @@ function runStaticMiniprogramTests() {
   ["calculateCleanerTrust", "applyTrustDecay", "calculateBehaviorGraph", "calculateFraudRisk", "calculateCollusionRisk", "calculateGlobalRisk"].forEach((fn) => {
     assert(trustRiskText.includes(`function ${fn}`), `${fn} should be implemented in trust-risk engine`);
   });
+  assert(riskNormalizerText.includes("function normalizeRiskScores"), "riskNormalizer should expose normalizeRiskScores");
+  assert(behaviorGraphStoreText.includes("createBehaviorGraphStore"), "behaviorGraphStore should expose persistent store");
+  assert(behaviorGraphStoreText.includes("detectLongTermPatterns"), "behaviorGraphStore should detect long-term patterns");
+  assert(decisionCalibratorText.includes("function calibrateDecision"), "decisionCalibrator should expose calibrateDecision");
+  assert(trustRiskText.includes("calibrateDecision"), "trust-risk engine should use calibrated decisions");
+  assert(cloudIndexText.includes("behaviorGraphEdges"), "cloud function should persist behavior graph edges");
+  assert(v024QaText.includes("r5 稳定层检查"), "v0.2.4 QA checklist should include r5 stabilization checks");
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
   assert(orderDetailText.includes("openClaimCreate"), "order-detail should include claim create entry");
   assert(orderDetailText.includes("openExceptionReport"), "order-detail should include cleaner exception entry");
