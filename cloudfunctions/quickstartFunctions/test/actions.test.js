@@ -2560,12 +2560,14 @@ async function runPlatformOpsWorkflowTests() {
   });
   const paymentDb = createPrivacyDB({ orders: [paymentOrder] });
   const customer = await loadFunction({ openid: "customer-a", db: paymentDb, env: { APP_ENV: "production" } });
+  let firstIntentId = "";
   try {
     const firstIntent = await invoke(customer.main, {
       action: "createPaymentIntent",
       data: { orderId: "ops-payment-order", idempotencyKey: "same-key" },
     });
     assert.strictEqual(firstIntent.success, true, "createPaymentIntent should succeed");
+    firstIntentId = firstIntent.data.paymentIntent.intentId;
     const secondIntent = await invoke(customer.main, {
       action: "createPaymentIntent",
       data: { orderId: "ops-payment-order", idempotencyKey: "same-key" },
@@ -2579,11 +2581,16 @@ async function runPlatformOpsWorkflowTests() {
     assert.strictEqual(thirdIntent.success, true, "same pending order should not create duplicate payment intent with different key");
     assert.strictEqual(thirdIntent.data.paymentIntent.intentId, firstIntent.data.paymentIntent.intentId);
     assert.strictEqual(paymentDb.data.paymentIntents.length, 1, "same unpaid order should not create duplicate payment intents");
+  } finally {
+    customer.restore();
+  }
 
-    const paid = await invoke(customer.main, {
+  const paymentAdmin = await loadFunction({ openid: "admin-a", db: paymentDb, env: { APP_ENV: "production" } });
+  try {
+    const paid = await invoke(paymentAdmin.main, {
       action: "handlePaymentCallback",
       data: {
-        intentId: firstIntent.data.paymentIntent.intentId,
+        intentId: firstIntentId,
         eventId: "evt-paid-1",
         status: "paid",
         amount: 129,
@@ -2594,10 +2601,10 @@ async function runPlatformOpsWorkflowTests() {
     assert.strictEqual(paymentDb.data.orders[0].status, "confirmed", "paid callback should move order to confirmed compatibility state");
     assert.strictEqual(paymentDb.data.orders[0].escrowStatus, "held");
     assert.strictEqual(paymentDb.data.orders[0].opsState, "PAID");
-    const duplicate = await invoke(customer.main, {
+    const duplicate = await invoke(paymentAdmin.main, {
       action: "handlePaymentCallback",
       data: {
-        intentId: firstIntent.data.paymentIntent.intentId,
+        intentId: firstIntentId,
         eventId: "evt-paid-1",
         status: "paid",
         amount: 129,
@@ -2608,7 +2615,7 @@ async function runPlatformOpsWorkflowTests() {
     assert.strictEqual(duplicate.data.duplicate, true);
     assert.strictEqual(paymentDb.data.paymentCallbacks.length, 1, "duplicate callback event should not create duplicate callback records");
   } finally {
-    customer.restore();
+    paymentAdmin.restore();
   }
 
   const opsStateDb = createPrivacyDB({
@@ -2643,6 +2650,7 @@ async function runPlatformOpsWorkflowTests() {
         _id: "ops-settle-order",
         status: "completed",
         paymentStatus: "escrowed",
+        escrowStatus: "held",
         settlementStatus: "pending",
         cleanerIncome: 100,
         platformFee: 29,
@@ -2672,7 +2680,10 @@ async function runPlatformOpsWorkflowTests() {
     });
     assert.strictEqual(adjusted.success, true, "adjustPayout should succeed for admin");
     assert.strictEqual(adjusted.data.settlement.payoutAmount, 92);
-    const refunded = await invoke(admin.main, { action: "forceRefund", data: { orderId: "ops-settle-order", reason: "manual ops test" } });
+    const refunded = await invoke(admin.main, {
+      action: "forceRefund",
+      data: { orderId: "ops-settle-order", reason: "manual ops test", confirm: "REFUND_SETTLED_ORDER" },
+    });
     assert.strictEqual(refunded.success, true, "forceRefund should succeed for admin");
     assert.strictEqual(settlementDb.data.orders[0].paymentStatus, "refunded");
   } finally {
@@ -2693,6 +2704,347 @@ async function runPlatformOpsWorkflowTests() {
     assert(payoutReport.data.report.mismatches.some((item) => item.type === "payout_amount_mismatch"));
   } finally {
     mismatchAdmin.restore();
+  }
+}
+
+function seedPaymentIntent(overrides = {}) {
+  return {
+    _id: overrides.intentId || overrides._id || "pi-test",
+    intentId: overrides.intentId || "pi-test",
+    intentKey: overrides.intentKey || `${overrides.orderId || "order-a"}::test`,
+    orderId: overrides.orderId || "order-a",
+    orderNo: "",
+    userOpenid: overrides.userOpenid || "customer-a",
+    amount: overrides.amount === undefined ? 129 : overrides.amount,
+    currency: "CNY",
+    status: overrides.status || "pending",
+    paymentProvider: "manual_stub",
+    idempotencyKey: overrides.idempotencyKey || "test",
+    createdAt: "2026-06-14T00:00:00.000Z",
+    updatedAt: "2026-06-14T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+async function runPlatformOpsBoundaryTests() {
+  const waitingPaymentOrder = seedOrder({
+    _id: "ops-boundary-pay",
+    status: "waiting_payment",
+    paymentStatus: "pending_pay",
+    settlementStatus: "pending",
+    escrowStatus: "",
+    orderAmount: 129,
+    customerPayAmount: 129,
+    cleanerIncome: 100,
+    platformFee: 29,
+  });
+  const callbackDb = createPrivacyDB({
+    orders: [waitingPaymentOrder],
+    paymentIntents: [seedPaymentIntent({ _id: "pi-boundary-pay", intentId: "pi-boundary-pay", orderId: "ops-boundary-pay" })],
+  });
+  const callbackCustomer = await loadFunction({ openid: "customer-a", db: callbackDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(callbackCustomer.main, {
+        action: "handlePaymentCallback",
+        data: { intentId: "pi-boundary-pay", eventId: "evt-customer", status: "paid", amount: 129, orderId: "ops-boundary-pay" },
+      }),
+      "FORBIDDEN",
+      "无管理员权限",
+      "customer handlePaymentCallback"
+    );
+  } finally {
+    callbackCustomer.restore();
+  }
+  const callbackCleaner = await loadFunction({ openid: "cleaner-a", db: callbackDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(callbackCleaner.main, {
+        action: "handlePaymentCallback",
+        data: { intentId: "pi-boundary-pay", eventId: "evt-cleaner", status: "paid", amount: 129, orderId: "ops-boundary-pay" },
+      }),
+      "FORBIDDEN",
+      "无管理员权限",
+      "cleaner handlePaymentCallback"
+    );
+  } finally {
+    callbackCleaner.restore();
+  }
+  const callbackAdmin = await loadFunction({ openid: "admin-a", db: callbackDb, env: { APP_ENV: "production" } });
+  try {
+    const paid = await invoke(callbackAdmin.main, {
+      action: "handlePaymentCallback",
+      data: { intentId: "pi-boundary-pay", eventId: "evt-admin-paid", status: "paid", amount: 129, orderId: "ops-boundary-pay" },
+    });
+    assert.strictEqual(paid.success, true, "admin handlePaymentCallback should succeed");
+    assert.strictEqual(callbackDb.data.orders[0].status, "confirmed");
+    const duplicate = await invoke(callbackAdmin.main, {
+      action: "handlePaymentCallback",
+      data: { intentId: "pi-boundary-pay", eventId: "evt-admin-paid", status: "paid", amount: 129, orderId: "ops-boundary-pay" },
+    });
+    assert.strictEqual(duplicate.success, true, "same callback event should be idempotent");
+    assert.strictEqual(duplicate.data.duplicate, true);
+    expectFailed(
+      await invoke(callbackAdmin.main, {
+        action: "handlePaymentCallback",
+        data: { intentId: "pi-boundary-pay", eventId: "evt-admin-paid-again", status: "paid", amount: 129, orderId: "ops-boundary-pay" },
+      }),
+      "INVALID_INPUT",
+      null,
+      "different paid event after paid"
+    );
+  } finally {
+    callbackAdmin.restore();
+  }
+
+  const conflictDb = createPrivacyDB({
+    orders: [
+      seedOrder({ _id: "ops-callback-a", status: "waiting_payment", paymentStatus: "pending_pay", orderAmount: 129, customerPayAmount: 129 }),
+      seedOrder({ _id: "ops-callback-b", status: "waiting_payment", paymentStatus: "pending_pay", orderAmount: 129, customerPayAmount: 129 }),
+    ],
+    paymentIntents: [
+      seedPaymentIntent({ _id: "pi-callback-a", intentId: "pi-callback-a", orderId: "ops-callback-a" }),
+      seedPaymentIntent({ _id: "pi-callback-b", intentId: "pi-callback-b", orderId: "ops-callback-b", intentKey: "ops-callback-b::test" }),
+    ],
+    paymentCallbacks: [{ _id: "cb-existing", eventId: "evt-conflict", intentId: "pi-callback-a", orderId: "ops-callback-a" }],
+  });
+  const conflictAdmin = await loadFunction({ openid: "admin-a", db: conflictDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(conflictAdmin.main, {
+        action: "handlePaymentCallback",
+        data: { intentId: "pi-callback-b", eventId: "evt-conflict", status: "paid", amount: 129, orderId: "ops-callback-b" },
+      }),
+      "INVALID_INPUT",
+      "支付回调事件 ID 冲突",
+      "duplicate callback event conflict"
+    );
+  } finally {
+    conflictAdmin.restore();
+  }
+
+  for (const item of [
+    { name: "confirmed escrowed", order: seedOrder({ _id: "ops-intent-confirmed", status: "confirmed", paymentStatus: "escrowed" }) },
+    { name: "completed", order: seedOrder({ _id: "ops-intent-completed", status: "completed", paymentStatus: "escrowed" }) },
+    { name: "cancelled", order: seedOrder({ _id: "ops-intent-cancelled", status: "cancelled", paymentStatus: "unpaid" }) },
+    { name: "refunded", order: seedOrder({ _id: "ops-intent-refunded", status: "cancelled", paymentStatus: "refunded" }) },
+  ]) {
+    const db = createPrivacyDB({ orders: [item.order] });
+    const context = await loadFunction({ openid: "customer-a", db, env: { APP_ENV: "production" } });
+    try {
+      expectFailed(
+        await invoke(context.main, { action: "createPaymentIntent", data: { orderId: item.order._id, idempotencyKey: item.name } }),
+        "INVALID_STATUS",
+        "当前订单不需要支付",
+        `createPaymentIntent ${item.name}`
+      );
+    } finally {
+      context.restore();
+    }
+  }
+
+  const paidIntentDb = createPrivacyDB({
+    orders: [seedOrder({ _id: "ops-paid-intent-order", status: "waiting_payment", paymentStatus: "pending_pay", orderAmount: 129, customerPayAmount: 129 })],
+    paymentIntents: [seedPaymentIntent({ _id: "pi-already-paid", intentId: "pi-already-paid", orderId: "ops-paid-intent-order", status: "paid" })],
+  });
+  const paidIntentCustomer = await loadFunction({ openid: "customer-a", db: paidIntentDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(paidIntentCustomer.main, { action: "createPaymentIntent", data: { orderId: "ops-paid-intent-order", idempotencyKey: "new-key" } }),
+      "INVALID_STATUS",
+      "当前订单已存在已支付记录",
+      "createPaymentIntent after paid intent"
+    );
+    assert.strictEqual(paidIntentDb.data.paymentIntents.length, 1, "paid intent order should not create a new pending intent");
+  } finally {
+    paidIntentCustomer.restore();
+  }
+
+  for (const item of [
+    { name: "cancelled", order: seedOrder({ _id: "ops-late-cancelled", status: "cancelled", paymentStatus: "unpaid" }) },
+    { name: "completed", order: seedOrder({ _id: "ops-late-completed", status: "completed", paymentStatus: "escrowed" }) },
+    { name: "confirmed escrowed", order: seedOrder({ _id: "ops-late-confirmed", status: "confirmed", paymentStatus: "escrowed" }) },
+    { name: "refunded", order: seedOrder({ _id: "ops-late-refunded", status: "cancelled", paymentStatus: "refunded" }) },
+  ]) {
+    const db = createPrivacyDB({
+      orders: [item.order],
+      paymentIntents: [seedPaymentIntent({ _id: `pi-${item.name}`, intentId: `pi-${item.name}`, orderId: item.order._id })],
+    });
+    const admin = await loadFunction({ openid: "admin-a", db, env: { APP_ENV: "production" } });
+    try {
+      expectFailed(
+        await invoke(admin.main, {
+          action: "handlePaymentCallback",
+          data: { intentId: `pi-${item.name}`, eventId: `evt-${item.name}`, status: "paid", amount: 129, orderId: item.order._id },
+        }),
+        "INVALID_STATUS",
+        null,
+        `late paid callback ${item.name}`
+      );
+      if (item.order.status !== "confirmed") {
+        assert.notStrictEqual(db.data.orders[0].status, "confirmed", `late callback should not revive ${item.name}`);
+      }
+      assert.strictEqual(db.data.paymentCallbacks.length, 0, `late callback should not record callback for ${item.name}`);
+      assert.notStrictEqual(db.data.orders[0].opsState, "PAID", `late callback should not mark ${item.name} paid`);
+    } finally {
+      admin.restore();
+    }
+  }
+
+  const completeDb = createPrivacyDB({
+    orders: [seedOrder({ _id: "ops-complete-order", status: "waiting_complete", paymentStatus: "escrowed", escrowStatus: "held" })],
+  });
+  const completeCustomer = await loadFunction({ openid: "customer-a", db: completeDb, env: { APP_ENV: "production" } });
+  try {
+    const complete = await invoke(completeCustomer.main, {
+      action: "updateOrderStatus",
+      data: { orderId: "ops-complete-order", status: "completed", rating: 5, content: "ok" },
+    });
+    assert.strictEqual(complete.success, true, "customer should complete order");
+    assert.strictEqual(completeDb.data.orders[0].status, "completed");
+    assert.strictEqual(completeDb.data.orders[0].paymentStatus, "escrowed");
+    assert.strictEqual(completeDb.data.orders[0].settlementStatus, "pending");
+    assert.strictEqual(completeDb.data.orders[0].escrowStatus, "held");
+    assert.strictEqual(completeDb.data.orders[0].opsState, "COMPLETED");
+    assert.strictEqual(completeDb.data.orders[0].settledAt, "");
+  } finally {
+    completeCustomer.restore();
+  }
+  const completeCleaner = await loadFunction({ openid: "cleaner-a", db: completeDb, env: { APP_ENV: "production" } });
+  try {
+    const income = await invoke(completeCleaner.main, { action: "getIncomeStats", data: {} });
+    assert.strictEqual(income.success, true);
+    assert.strictEqual(income.data.orderIncome, 0, "unsettled completed order should not count as settled income");
+  } finally {
+    completeCleaner.restore();
+  }
+
+  const autoCompleteDb = createPrivacyDB({
+    orders: [oldWaitingCompleteOrder()],
+    adminUsers: [{ _id: "admin-a", openid: "admin-a", active: true }],
+  });
+  const autoAdmin = await loadFunction({ openid: "admin-a", db: autoCompleteDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(autoAdmin.main, { action: "autoAcceptOverdueOrders", data: {} });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(autoCompleteDb.data.orders[0].status, "auto_completed");
+    assert.strictEqual(autoCompleteDb.data.orders[0].settlementStatus, "pending");
+    assert.strictEqual(autoCompleteDb.data.orders[0].paymentStatus, "escrowed");
+  } finally {
+    autoAdmin.restore();
+  }
+
+  for (const item of [
+    { name: "unpaid", order: seedOrder({ _id: "ops-settle-unpaid", status: "completed", paymentStatus: "unpaid", escrowStatus: "", settlementStatus: "pending" }) },
+    { name: "refunded", order: seedOrder({ _id: "ops-settle-refunded", status: "completed", paymentStatus: "refunded", escrowStatus: "refunded", settlementStatus: "pending" }) },
+  ]) {
+    const db = createPrivacyDB({ orders: [item.order] });
+    const admin = await loadFunction({ openid: "admin-a", db, env: { APP_ENV: "production" } });
+    try {
+      expectFailed(
+        await invoke(admin.main, { action: "settleOrder", data: { orderId: item.order._id } }),
+        "INVALID_STATUS",
+        null,
+        `settleOrder ${item.name}`
+      );
+    } finally {
+      admin.restore();
+    }
+  }
+
+  const activeClaimDb = createPrivacyDB({
+    orders: [seedOrder({ _id: "ops-settle-claim", status: "completed", paymentStatus: "escrowed", escrowStatus: "held", settlementStatus: "pending", activeClaimId: "claim-a", afterSaleStatus: "under_review" })],
+  });
+  const activeClaimAdmin = await loadFunction({ openid: "admin-a", db: activeClaimDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(activeClaimAdmin.main, { action: "settleOrder", data: { orderId: "ops-settle-claim" } }),
+      "CONFIRM_REQUIRED",
+      "订单存在进行中的售后，结算需要显式确认",
+      "settleOrder active claim"
+    );
+    const override = await invoke(activeClaimAdmin.main, {
+      action: "settleOrder",
+      data: { orderId: "ops-settle-claim", confirm: "SETTLE_WITH_ACTIVE_CLAIM" },
+    });
+    assert.strictEqual(override.success, true, "settleOrder active claim with confirm should succeed");
+    assert.strictEqual(activeClaimDb.data.orders[0].settlementStatus, "settled");
+    assert.strictEqual(activeClaimDb.data.orders[0].paymentStatus, "settled");
+    assert.strictEqual(activeClaimDb.data.orders[0].opsState, "SETTLED");
+  } finally {
+    activeClaimAdmin.restore();
+  }
+
+  const settledRefundDb = createPrivacyDB({
+    orders: [seedOrder({ _id: "ops-refund-settled", status: "completed", paymentStatus: "settled", escrowStatus: "released", settlementStatus: "settled" })],
+    paymentIntents: [seedPaymentIntent({ _id: "pi-refund-settled", intentId: "pi-refund-settled", orderId: "ops-refund-settled", status: "paid" })],
+    settlements: [{ _id: "stl-refund-settled", settlementId: "stl-refund-settled", orderId: "ops-refund-settled", cleanerIncome: 100, platformFee: 29, penalty: 0, bonus: 0, payoutAmount: 100, status: "pending_payout" }],
+  });
+  const settledRefundAdmin = await loadFunction({ openid: "admin-a", db: settledRefundDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(settledRefundAdmin.main, { action: "forceRefund", data: { orderId: "ops-refund-settled" } }),
+      "CONFIRM_REQUIRED",
+      "已结算订单退款需要结算冲正确认",
+      "forceRefund settled without confirm"
+    );
+    const refunded = await invoke(settledRefundAdmin.main, {
+      action: "forceRefund",
+      data: { orderId: "ops-refund-settled", confirm: "REFUND_SETTLED_ORDER", reason: "ops reversal" },
+    });
+    assert.strictEqual(refunded.success, true, "forceRefund settled with confirm should succeed");
+    assert.strictEqual(settledRefundDb.data.orders[0].paymentStatus, "refunded");
+    assert.strictEqual(settledRefundDb.data.orders[0].settlementStatus, "refund_pending_reconciliation");
+    assert.strictEqual(settledRefundDb.data.settlements[0].status, "refund_pending_reconciliation");
+  } finally {
+    settledRefundAdmin.restore();
+  }
+
+  const unpaidRefundDb = createPrivacyDB({
+    orders: [seedOrder({ _id: "ops-refund-unpaid", status: "waiting_payment", paymentStatus: "pending_pay", escrowStatus: "", settlementStatus: "pending" })],
+  });
+  const unpaidRefundAdmin = await loadFunction({ openid: "admin-a", db: unpaidRefundDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(unpaidRefundAdmin.main, { action: "forceRefund", data: { orderId: "ops-refund-unpaid" } }),
+      "INVALID_STATUS",
+      "未支付订单不能标记退款",
+      "forceRefund unpaid"
+    );
+    assert.notStrictEqual(unpaidRefundDb.data.orders[0].paymentStatus, "refunded");
+  } finally {
+    unpaidRefundAdmin.restore();
+  }
+
+  const paidRefundDb = createPrivacyDB({
+    orders: [seedOrder({ _id: "ops-refund-paid", status: "confirmed", paymentStatus: "escrowed", escrowStatus: "held", settlementStatus: "pending" })],
+    paymentIntents: [seedPaymentIntent({ _id: "pi-refund-paid", intentId: "pi-refund-paid", orderId: "ops-refund-paid", status: "paid" })],
+  });
+  const paidRefundAdmin = await loadFunction({ openid: "admin-a", db: paidRefundDb, env: { APP_ENV: "production" } });
+  try {
+    const refund = await invoke(paidRefundAdmin.main, { action: "forceRefund", data: { orderId: "ops-refund-paid" } });
+    assert.strictEqual(refund.success, true, "forceRefund paid escrowed order should succeed");
+    assert.strictEqual(paidRefundDb.data.orders[0].paymentStatus, "refunded");
+  } finally {
+    paidRefundAdmin.restore();
+  }
+
+  const payoutAuditDb = createPrivacyDB({
+    settlements: [{ _id: "stl-audit", settlementId: "stl-audit", orderId: "ops-payout-audit", cleanerIncome: 100, platformFee: 29, penalty: 0, bonus: 0, payoutAmount: 100, status: "pending_payout" }],
+  });
+  const payoutAuditAdmin = await loadFunction({ openid: "admin-a", db: payoutAuditDb, env: { APP_ENV: "production" } });
+  try {
+    const adjusted = await invoke(payoutAuditAdmin.main, { action: "adjustPayout", data: { orderId: "ops-payout-audit", penalty: 20, bonus: 5, reason: "manual correction" } });
+    assert.strictEqual(adjusted.success, true, "adjustPayout should succeed");
+    const audit = payoutAuditDb.data.auditLogs.find((item) => item.action === "adjustPayout");
+    assert(audit, "adjustPayout should write audit log");
+    assert.strictEqual(audit.targetId, "stl-audit");
+    const serialized = JSON.stringify(audit);
+    ["13800000000", "1幢101室", "customer-wechat", "cloud://id-card"].forEach((secret) => {
+      assert(!serialized.includes(secret), `adjustPayout audit log should not contain ${secret}`);
+    });
+  } finally {
+    payoutAuditAdmin.restore();
   }
 }
 
@@ -2815,8 +3167,27 @@ function runStaticMiniprogramTests() {
   ].forEach((action) => {
     assert(cloudIndexText.includes(action), `${action} should be registered for v0.2.5 platform ops`);
   });
+  const createPaymentIntentBlock = (cloudIndexText.match(/async function createPaymentIntent[\s\S]*?async function handlePaymentCallback/) || [""])[0];
+  const handlePaymentCallbackBlock = (cloudIndexText.match(/async function handlePaymentCallback[\s\S]*?async function getPaymentStatus/) || [""])[0];
+  const completeOrderWithReviewBlock = (cloudIndexText.match(/async function completeOrderWithReview[\s\S]*?async function autoAcceptOverdueOrdersInternal/) || [""])[0];
+  const statusPaymentPatchBlock = (cloudIndexText.match(/function statusPaymentPatch[\s\S]*?function now/) || [""])[0];
+  const settleOrderBlock = (cloudIndexText.match(/async function settleOrder[\s\S]*?async function forceRefund/) || [""])[0];
+  const forceRefundBlock = (cloudIndexText.match(/async function forceRefund[\s\S]*?async function adminListOrders/) || [""])[0];
+  const adjustPayoutBlock = (cloudIndexText.match(/async function adjustPayout[\s\S]*?async function reconcileOrders/) || [""])[0];
+  assert(handlePaymentCallbackBlock.includes("requireAdmin(openid)"), "handlePaymentCallback should require admin in manual_stub mode");
+  assert(handlePaymentCallbackBlock.includes("支付回调事件 ID 冲突"), "handlePaymentCallback should validate duplicate event ownership");
+  assert(handlePaymentCallbackBlock.includes("assertPaymentCallbackAllowedForOrder"), "handlePaymentCallback should validate current order status");
+  assert(createPaymentIntentBlock.includes("isOrderWaitingForPayment(order)"), "createPaymentIntent should only allow waiting_payment + pending_pay");
+  assert(createPaymentIntentBlock.includes("orderHasPaidPaymentIntent"), "createPaymentIntent should reject orders with paid payment intent");
+  assert(!/settlementStatus:\s*"settled"/.test(completeOrderWithReviewBlock), "completeOrderWithReview should not mark orders settled");
+  assert(/settlementStatus:\s*"pending"/.test(completeOrderWithReviewBlock), "completeOrderWithReview should leave settlement pending");
+  assert(!/completed[\s\S]*paymentStatus:\s*"settled"/.test(statusPaymentPatchBlock), "statusPaymentPatch should not auto-settle completed orders");
+  assert(settleOrderBlock.includes("assertSettleOrderAllowed"), "settleOrder should validate payment/escrow/active claim boundaries");
+  assert(/paymentStatus:\s*"settled"/.test(settleOrderBlock), "settleOrder should be the path that marks payment settled");
+  assert(forceRefundBlock.includes("REFUND_SETTLED_ORDER"), "forceRefund should require settled-order reversal confirmation");
+  assert(adjustPayoutBlock.includes("writeAuditLog"), "adjustPayout should write audit log");
   assert(fs.existsSync(v025QaPath), "v0.2.5 manual QA checklist should exist");
-  ["支付意图", "重复支付", "结算", "SLA", "对账", "真实微信支付未接入"].forEach((phrase) => {
+  ["支付意图", "重复支付", "结算", "SLA", "对账", "真实微信支付未接入", "普通用户不能触发 payment callback", "完成服务不等于已结算", "已结算退款必须结算冲正确认", "payout adjustment 有 audit log"].forEach((phrase) => {
     assert(v025QaText.includes(phrase), `v0.2.5 QA checklist should mention ${phrase}`);
   });
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
@@ -2902,6 +3273,7 @@ runProductionGateTests()
   .then(runProtectionWorkflowTests)
   .then(runTrustRiskWorkflowTests)
   .then(runPlatformOpsWorkflowTests)
+  .then(runPlatformOpsBoundaryTests)
   .then(runStaticMiniprogramTests)
   .then(() => {
     console.log("action tests passed");

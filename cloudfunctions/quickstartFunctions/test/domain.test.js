@@ -421,16 +421,18 @@ assert.strictEqual(
 );
 assert.strictEqual(canEditReview({ createdAt: "2026-05-26T10:00:00.000Z", editCount: 1 }, new Date("2026-05-26T12:00:00.000Z")), false);
 
-assert.strictEqual(normalizePaymentStatus({ status: "completed" }), "settled");
-assert.strictEqual(normalizePaymentStatus({ status: "auto_completed" }), "settled");
+assert.strictEqual(normalizePaymentStatus({ status: "completed" }), "escrowed");
+assert.strictEqual(normalizePaymentStatus({ status: "auto_completed" }), "escrowed");
+assert.strictEqual(normalizePaymentStatus({ status: "completed", settlementStatus: "settled" }), "settled");
 assert.strictEqual(normalizePaymentStatus({ status: "cancelled", paidAt: "2026-05-26T10:00:00.000Z" }), "refunded");
 assert.strictEqual(normalizePaymentStatus({ status: "waiting_payment" }), "pending_pay");
 assert.strictEqual(normalizePaymentStatus({ status: "confirmed" }), "escrowed");
 assert.strictEqual(canHideOrderForRole({ status: "completed" }, "customer"), true);
 assert.strictEqual(canHideOrderForRole({ status: "auto_completed" }, "cleaner"), true);
 assert.strictEqual(canHideOrderForRole({ status: "waiting_complete" }, "customer"), false);
-assert.strictEqual(isSettledIncomeOrder({ status: "completed", paymentStatus: "settled" }), true);
-assert.strictEqual(isSettledIncomeOrder({ status: "auto_completed", paymentStatus: "settled" }), true);
+assert.strictEqual(isSettledIncomeOrder({ status: "completed", paymentStatus: "settled", settlementStatus: "settled" }), true);
+assert.strictEqual(isSettledIncomeOrder({ status: "auto_completed", paymentStatus: "settled", settlementStatus: "settled" }), true);
+assert.strictEqual(isSettledIncomeOrder({ status: "completed", paymentStatus: "settled" }), false);
 assert.strictEqual(isSettledIncomeOrder({ status: "completed", paymentStatus: "escrowed" }), false);
 assert.strictEqual(autoAcceptanceHoursForOrder({ serviceType: "日常保洁" }), 48);
 assert.strictEqual(autoAcceptanceHoursForOrder({ serviceType: "深度保洁" }), 72);

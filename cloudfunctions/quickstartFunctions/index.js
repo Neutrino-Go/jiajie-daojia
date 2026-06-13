@@ -228,7 +228,7 @@ function paymentStatusForCancelledOrder(order) {
 function statusPaymentPatch(status, order = {}) {
   if (status === "waiting_payment") return { paymentStatus: "pending_pay" };
   if (["confirmed", "in_service", "waiting_complete", "waiting_acceptance"].includes(status)) return { paymentStatus: "escrowed" };
-  if (status === "completed" || status === "auto_completed") return { paymentStatus: "settled" };
+  if (status === "completed" || status === "auto_completed") return { paymentStatus: "escrowed", settlementStatus: "pending", escrowStatus: "held" };
   if (status === "cancelled") return { paymentStatus: paymentStatusForCancelledOrder(order) };
   if (["waiting_response", "waiting_confirm", "assigned_waiting_accept", "assigned_declined"].includes(status)) return { paymentStatus: "unpaid" };
   return {};
@@ -1261,10 +1261,11 @@ async function completeOrderWithReview(order, reviewInput, options = {}) {
   const updateData = {
     status: options.autoAccepted ? "auto_completed" : "completed",
     completedAt: updateTime,
-    paymentStatus: "settled",
-    settlementStatus: "settled",
+    paymentStatus: "escrowed",
+    settlementStatus: "pending",
+    escrowStatus: "held",
     opsState: "COMPLETED",
-    settledAt: updateTime,
+    settledAt: "",
     cleanerId: order.cleanerId || order.acceptedCleanerOpenid || "",
     orderAmount: Number(order.orderAmount || order.finalPrice || order.actualPrice || order.estimatedPrice || pricing.orderAmount),
     platformFee: Number(order.platformFee || pricing.platformFee),
@@ -1307,7 +1308,7 @@ async function autoAcceptOverdueOrdersInternal(data = {}, auditContext = {}) {
       targetType: "order",
       targetId: order._id,
       before: { status: order.status, paymentStatus: normalizePaymentStatus(order) },
-      after: { status: "auto_completed", paymentStatus: "settled", autoAccepted: true },
+      after: { status: "auto_completed", paymentStatus: "escrowed", settlementStatus: "pending", autoAccepted: true },
       metadata: { checkedAt, days, source: auditContext.source || "internal" },
     });
     orderIds.push(order._id);
@@ -4157,6 +4158,47 @@ async function findPaymentIntentByIntentId(intentId) {
   return findOne("paymentIntents", { intentId }).catch(() => null);
 }
 
+function isOrderWaitingForPayment(order = {}) {
+  return order.status === "waiting_payment" && normalizePaymentStatus(order) === "pending_pay";
+}
+
+function isActiveAfterSaleStatus(status) {
+  return ["submitted", "under_review", "needs_more_info"].includes(String(status || ""));
+}
+
+async function orderHasPaidPaymentIntent(orderId) {
+  const intents = await getCollectionData("paymentIntents").catch(() => []);
+  return intents.some((intent) => intent.orderId === orderId && ["paid", "refunded"].includes(intent.status));
+}
+
+function assertPaymentCallbackAllowedForOrder(order = {}, nextIntent = {}) {
+  const paymentStatus = normalizePaymentStatus(order);
+  if (nextIntent.status === "paid" && !isOrderWaitingForPayment(order)) {
+    throw AppError("当前订单状态不能确认支付", "INVALID_STATUS");
+  }
+  if (nextIntent.status === "refunded" && !["escrowed", "settled"].includes(paymentStatus)) {
+    throw AppError("当前订单状态不能退款", "INVALID_STATUS");
+  }
+}
+
+function assertSettleOrderAllowed(order = {}, data = {}) {
+  if (!["completed", "auto_completed"].includes(order.status)) {
+    throw AppError("只有已完成订单可以结算", "INVALID_STATUS");
+  }
+  if (normalizePaymentStatus(order) === "refunded") {
+    throw AppError("已退款订单不能结算", "INVALID_STATUS");
+  }
+  if (normalizePaymentStatus(order) !== "escrowed" || order.escrowStatus !== "held") {
+    throw AppError("只有已支付并待结算订单可以结算", "INVALID_STATUS");
+  }
+  if (order.settlementStatus === "settled") {
+    throw AppError("订单已结算", "INVALID_STATUS");
+  }
+  if (isActiveAfterSaleStatus(order.afterSaleStatus) && data.confirm !== "SETTLE_WITH_ACTIVE_CLAIM") {
+    throw AppError("订单存在进行中的售后，结算需要显式确认", "CONFIRM_REQUIRED");
+  }
+}
+
 async function createPaymentIntent(data = {}) {
   const openid = getOpenid();
   const order = await getOrder(data.orderId);
@@ -4165,10 +4207,13 @@ async function createPaymentIntent(data = {}) {
   if (!viewerIsAdmin && order.customerOpenid !== openid) {
     throw AppError("无权为该订单创建支付意图", "FORBIDDEN");
   }
-  if (!["waiting_payment", "confirmed"].includes(order.status) && normalizePaymentStatus(order) !== "pending_pay") {
+  if (!isOrderWaitingForPayment(order)) {
     throw AppError("当前订单不需要支付", "INVALID_STATUS");
   }
   await safeCreateCollection("paymentIntents");
+  if (await orderHasPaidPaymentIntent(order._id)) {
+    throw AppError("当前订单已存在已支付记录", "INVALID_STATUS");
+  }
   const createdAt = now();
   const snapshot = createPaymentIntentSnapshot(order, {
     idempotencyKey: data.idempotencyKey || data.requestId || order._id,
@@ -4200,10 +4245,17 @@ async function createPaymentIntent(data = {}) {
 }
 
 async function handlePaymentCallback(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
   const intent = await findPaymentIntentByIntentId(data.intentId || data.paymentIntentId);
   if (!intent) throw AppError("支付意图不存在", "INVALID_INPUT");
+  const order = await getOrder(intent.orderId);
+  if (!order) throw AppError("订单不存在", "INVALID_INPUT");
   const duplicate = await findOne("paymentCallbacks", { eventId: data.eventId }).catch(() => null);
   if (duplicate) {
+    if (duplicate.intentId !== intent.intentId || duplicate.orderId !== intent.orderId) {
+      throw AppError("支付回调事件 ID 冲突", "INVALID_INPUT");
+    }
     return ok({ paymentIntent: publicPaymentIntent(intent), duplicate: true });
   }
   let nextIntent;
@@ -4212,8 +4264,7 @@ async function handlePaymentCallback(data = {}) {
   } catch (error) {
     throw AppError(error.message, "INVALID_INPUT");
   }
-  const order = await getOrder(intent.orderId);
-  if (!order) throw AppError("订单不存在", "INVALID_INPUT");
+  assertPaymentCallbackAllowedForOrder(order, nextIntent);
   await safeCreateCollection("paymentCallbacks");
   await db.collection("paymentCallbacks").add({
     data: {
@@ -4248,8 +4299,8 @@ async function handlePaymentCallback(data = {}) {
   }
   await db.collection("orders").doc(order._id).update({ data: updateData });
   await writeAuditLog({
-    actorOpenid: "payment_callback",
-    actorRole: "system",
+    actorOpenid: openid,
+    actorRole: "admin",
     action: "handlePaymentCallback",
     targetType: "paymentIntent",
     targetId: intent.intentId,
@@ -4274,7 +4325,8 @@ async function settleOrder(data = {}) {
   const order = await getOrder(data.orderId);
   if (!order) throw AppError("订单不存在", "INVALID_INPUT");
   const existing = await findOne("settlements", { orderId: order._id }).catch(() => null);
-  if (existing) return ok({ settlement: existing, idempotent: true });
+  if (existing && order.settlementStatus === "settled") return ok({ settlement: existing, idempotent: true });
+  assertSettleOrderAllowed(order, data);
   let settlement;
   try {
     settlement = createSettlementSnapshot(order, {
@@ -4290,6 +4342,7 @@ async function settleOrder(data = {}) {
   await db.collection("orders").doc(order._id).update({
     data: {
       settlementStatus: "settled",
+      paymentStatus: "settled",
       escrowStatus: "released",
       opsState: "SETTLED",
       settledAt: settlement.createdAt,
@@ -4312,16 +4365,31 @@ async function forceRefund(data = {}) {
   await requireAdmin(openid);
   const order = await getOrder(data.orderId);
   if (!order) throw AppError("订单不存在", "INVALID_INPUT");
+  const paymentStatus = normalizePaymentStatus(order);
+  if (!["escrowed", "settled"].includes(paymentStatus)) {
+    throw AppError("未支付订单不能标记退款", "INVALID_STATUS");
+  }
+  const isSettled = order.settlementStatus === "settled";
+  if (isSettled && data.confirm !== "REFUND_SETTLED_ORDER") {
+    throw AppError("已结算订单退款需要结算冲正确认", "CONFIRM_REQUIRED");
+  }
   const intent = (await findOne("paymentIntents", { orderId: order._id, status: "paid" }).catch(() => null)) || null;
+  const settlement = (await findOne("settlements", { orderId: order._id }).catch(() => null)) || null;
   const updatedAt = now();
   if (intent) {
     await db.collection("paymentIntents").doc(intent._id).update({ data: { status: "refunded", refundedAt: updatedAt, updatedAt } });
+  }
+  if (isSettled && settlement) {
+    await db.collection("settlements").doc(settlement._id).update({
+      data: { status: "refund_pending_reconciliation", refundedAt: updatedAt, updatedAt },
+    });
   }
   await db.collection("orders").doc(order._id).update({
     data: {
       paymentStatus: "refunded",
       paymentIntentStatus: "refunded",
       escrowStatus: "refunded",
+      settlementStatus: isSettled ? "refund_pending_reconciliation" : order.settlementStatus || "pending",
       opsState: "REFUNDED",
       refundedAt: updatedAt,
       updatedAt,
@@ -4333,7 +4401,7 @@ async function forceRefund(data = {}) {
     action: "forceRefund",
     targetType: "order",
     targetId: order._id,
-    after: { paymentStatus: "refunded", hasPaymentIntent: Boolean(intent) },
+    after: { paymentStatus: "refunded", settlementStatus: isSettled ? "refund_pending_reconciliation" : order.settlementStatus || "pending", hasPaymentIntent: Boolean(intent) },
     metadata: { reason: String(data.reason || "").slice(0, 120) },
   });
   return ok({ orderId: order._id, refunded: true });
@@ -4365,6 +4433,16 @@ async function adjustPayout(data = {}) {
   await safeCreateCollection("payoutAdjustments");
   await db.collection("payoutAdjustments").add({
     data: { orderId: settlement.orderId, ...adjustment, actorOpenid: openid, createdAt: now() },
+  });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "adjustPayout",
+    targetType: "settlement",
+    targetId: settlement.settlementId || settlement._id,
+    before: { payoutAmount: settlement.payoutAmount, penalty: settlement.penalty, bonus: settlement.bonus },
+    after: { payoutAmount: next.payoutAmount, penalty: next.penalty, bonus: next.bonus },
+    metadata: { reason: adjustment.reason },
   });
   return ok({ settlement: next });
 }
