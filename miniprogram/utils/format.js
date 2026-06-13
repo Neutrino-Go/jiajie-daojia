@@ -304,7 +304,9 @@ function avatarInitial(value, fallback = "邻") {
 
 function estimatePrice(order) {
   if (!order) return 0;
+  if (order.pricingSnapshot && order.pricingSnapshot.customerPayAmount) return Number(order.pricingSnapshot.customerPayAmount);
   if (order.pricingSnapshot && order.pricingSnapshot.orderAmount) return Number(order.pricingSnapshot.orderAmount);
+  if (order.customerPayAmount) return Number(order.customerPayAmount);
   if (order.amount) return Number(order.amount);
   if (order.orderAmount) return Number(order.orderAmount);
   if (order.estimatedPrice) return Number(order.estimatedPrice);
@@ -544,9 +546,10 @@ function decorateOrder(order, openid, role = "", referenceLocation = null) {
   const viewerRole = role || (isCustomer ? "customer" : isCleaner ? "cleaner" : "");
   const displayStatus = normalizeOrderStatus(order);
   const price = estimatePrice(order);
-  const commission = commissionFor(price);
-  const platformFee = Number(order.platformFee || commission.platformFee);
-  const cleanerIncome = Number(order.cleanerIncome || commission.cleanerIncome);
+  const hasCleanerIncome = order.cleanerIncome !== undefined && order.cleanerIncome !== null && order.cleanerIncome !== "";
+  const hasPlatformFee = order.platformFee !== undefined && order.platformFee !== null && order.platformFee !== "";
+  const platformFee = hasPlatformFee ? Number(order.platformFee || 0) : 0;
+  const cleanerIncome = hasCleanerIncome ? Number(order.cleanerIncome || 0) : 0;
   const paymentStatus = normalizePaymentStatus({ ...order, status: displayStatus });
   const afterSaleText = afterSaleStatusText(order.afterSaleStatus);
   const distanceFields = orderDistanceFields(order, referenceLocation);
@@ -604,11 +607,12 @@ function decorateOrder(order, openid, role = "", referenceLocation = null) {
     orderAmount: price,
     platformFee,
     cleanerIncome,
+    showCleanerIncome: hasCleanerIncome,
     priceText: `¥${formatMoney(price)}`,
     priceRangeText: `¥${formatMoney(price)}`,
-    platformFeeText: `¥${formatMoney(platformFee)}`,
-    platformFeeDeductText: `-¥${formatMoney(platformFee)}`,
-    cleanerIncomeText: `¥${formatMoney(cleanerIncome)}`,
+    platformFeeText: hasPlatformFee ? `¥${formatMoney(platformFee)}` : "",
+    platformFeeDeductText: hasPlatformFee ? `-¥${formatMoney(platformFee)}` : "",
+    cleanerIncomeText: hasCleanerIncome ? `¥${formatMoney(cleanerIncome)}` : "",
     roleText: viewerRole === "customer" ? "我发布的" : viewerRole === "cleaner" && isCleaner ? "客户发布" : "可接订单",
     customerMaskedPhone: maskPhone(order.contactPhone),
     responseCount: Number(order.responseCount ?? (order.responses || []).length),

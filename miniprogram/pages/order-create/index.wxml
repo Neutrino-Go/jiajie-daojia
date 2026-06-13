@@ -76,12 +76,13 @@
       <input class="input" value="{{form.addressText}}" data-field="addressText" bindinput="onInput" placeholder="详细地址，如楼栋门牌" />
     </view>
     <view class="grid-2">
-      <view class="field">
+      <view class="field" wx:if="{{isMoveInService}}">
         <view class="label">面积</view>
         <view class="input-with-suffix">
           <input class="input suffix-input" value="{{form.areaSize}}" data-field="areaSize" bindinput="onInput" type="digit" placeholder="请输入面积" />
           <text class="input-suffix">㎡</text>
         </view>
+        <view class="field-hint">开荒保洁按面积计价，60㎡ 起计；服务时长仅作预约参考。</view>
       </view>
       <view class="field">
         <view class="label">电话</view>
@@ -95,8 +96,14 @@
       <view class="label no-margin">价格预估</view>
       <view class="price" wx:if="{{pricing.canShowEstimate}}">{{pricing.orderAmountText}}</view>
     </view>
+    <view class="price-detail" wx:if="{{pricing.canShowEstimate && (pricing.listPriceText || pricing.discountText)}}">
+      <text wx:if="{{pricing.listPriceText}}" class="list-price">列表价 {{pricing.listPriceText}}</text>
+      <text wx:if="{{pricing.discountText}}" class="discount-text">{{pricing.discountText}}</text>
+    </view>
     <view class="pricing-hint" wx:if="{{!pricing.canShowEstimate}}">{{pricing.estimateHint}}</view>
+    <view class="pricing-loading" wx:if="{{pricingLoading}}">正在获取服务端报价...</view>
     <view class="price-tip">{{pricing.pricingText}}</view>
+    <view class="quote-tip" wx:if="{{pricing.quoteStatusText}}">{{pricing.quoteStatusText}}</view>
     <view class="price-protect-tip" wx:if="{{pricing.minIncomeTip}}">{{pricing.minIncomeTip}}</view>
     <view class="field">
       <textarea class="textarea" value="{{form.note}}" data-field="note" bindinput="onInput" placeholder="请描述您的需求，如特殊清洁要求等" />

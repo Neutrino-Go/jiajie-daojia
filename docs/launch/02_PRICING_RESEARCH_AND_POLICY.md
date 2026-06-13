@@ -170,3 +170,43 @@ v0.2.3 中实现：
 - 保留旧 `pricingSnapshot` 兼容，但新增 `priceRuleVersion`。
 - 兼容旧订单时，如果没有 `quoteId`，继续读旧 `pricingSnapshot`。
 
+## v0.2.3 implementation update
+
+## v0.2.3-r2 security update
+
+- Public `createPricingQuote` no longer trusts client-provided raw `couponDiscount`; until a real coupon rule service is enabled, public requests are quoted with server-controlled discount values.
+- `createOrder` requires an explicit order city when consuming `quoteId`; a quote from one city cannot be reused for another city or for an order with missing city.
+- Quote consumption now uses a conditional update on active quotes before order creation, so duplicate clicks cannot reuse the same active quote to create multiple orders.
+- Deep cleaning remains hourly-priced and no longer requires an area field; only move-in/opening cleaning requires `areaSqm` or `areaSize`.
+- Customer-visible cleaner responses are whitelisted and do not expose `platformFee` or `cleanerIncome`.
+- The order-create page should not show local fallback pricing before a service city is selected; it prompts the user to choose an address and fetch a server quote.
+
+v0.2.3 将服务端云函数作为唯一可信报价源。前端 `miniprogram/config/pricing.js` 仅保留为 UI fallback / legacy compatibility，不作为权威价格源。
+
+本版本落地内容：
+
+- 新增 `pricingRules` 和 `pricingQuotes` 集合。
+- 新增 `getPricingRules`、`createPricingQuote`、`getPricingQuote` action。
+- `createOrder` 优先校验并使用 `quoteId`，无 quoteId 时由服务端生成 fallback quote，标记 `generatedBy=createOrder_fallback`。
+- 订单写入 `quoteId`、`priceRuleVersion`、`pricingSnapshot`、`customerPayAmount`、`platformFeeRate`、`cleanerIncome`、`cashGrossMargin`、`cashBurn` 等字段。
+- 金额单位统一为人民币元（RMB yuan numbers），不引入分/厘混用。
+
+当前公式：
+
+```text
+customerPayAmount = launchPrice - couponDiscount
+platformFundedDiscount = listPrice - customerPayAmount
+paymentFeeEstimate = customerPayAmount * paymentFeeRateEstimate
+cashGrossMargin = customerPayAmount - cleanerIncome - protectionFee - insuranceCostAllocation - paymentFeeEstimate
+cashBurn = max(0, -cashGrossMargin)
+platformSubsidy = cashBurn
+```
+
+说明：
+
+- `cleanerIncome` 不因 `couponDiscount` 或上线拉新价降低。
+- `platformSubsidy` 只记录现金亏损，不再从 `cashGrossMargin` 二次扣减。
+- 普通用户报价和订单详情不返回 `cleanerIncome`、`cashBurn`、`platformSubsidy`、`marginWarning` 等内部经营字段。
+- 开荒保洁按面积报价，缺少面积时报错；低于 60㎡ 时按 60㎡ 起计，并记录 `actualAreaSqm` 与 `billableAreaSqm`。
+- 当前价格仍基于有限样本和上线试运营策略，正式大规模投放前仍需补齐 9 城人工 App 截图和实际订单样本。
+

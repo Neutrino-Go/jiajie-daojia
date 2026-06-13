@@ -153,6 +153,36 @@ assertCreateOrderInput({
   contactPhone: "13800000000",
 });
 
+assertCreateOrderInput({
+  publishMode: "public",
+  serviceType: "深度保洁",
+  community: "梧桐小区",
+  scheduledAt: "2026-05-22 09:00",
+  contactPhone: "13800000000",
+});
+
+assertCreateOrderInput({
+  publishMode: "public",
+  serviceType: "开荒保洁",
+  areaSqm: 80,
+  community: "梧桐小区",
+  scheduledAt: "2026-05-22 09:00",
+  contactPhone: "13800000000",
+});
+
+mustThrow(
+  "moveIn cleaning requires area",
+  () =>
+    assertCreateOrderInput({
+      publishMode: "public",
+      serviceType: "开荒保洁",
+      community: "梧桐小区",
+      scheduledAt: "2026-05-22 09:00",
+      contactPhone: "13800000000",
+    }),
+  "开荒保洁请填写面积后再发布"
+);
+
 mustThrow(
   "assigned cleaner requirement",
   () =>
@@ -488,14 +518,15 @@ const harbinDaily = miniprogramPricing.calculateOrderPrice({
   serviceType: "日常保洁",
   durationHours: 3,
 });
-assert.strictEqual(shanghaiDaily.orderAmount, 166);
-assert.strictEqual(shanghaiDaily.platformFee, 8.3);
-assert.strictEqual(shanghaiDaily.cleanerIncome, 157.7);
-assert.strictEqual(shanghaiDaily.cleanerHourlyIncome, 52.57);
-assert.strictEqual(harbinDaily.orderAmount, 131);
-assert.strictEqual(harbinDaily.platformFee, 6.55);
-assert.strictEqual(harbinDaily.cleanerIncome, 124.45);
-assert.strictEqual(harbinDaily.cleanerHourlyIncome, 41.48);
+assert.strictEqual(shanghaiDaily.orderAmount, 119);
+assert.strictEqual(shanghaiDaily.listPrice, 145);
+assert.strictEqual(shanghaiDaily.platformFee, 3.57);
+assert.strictEqual(shanghaiDaily.cleanerIncome, 144);
+assert.strictEqual(shanghaiDaily.cleanerHourlyIncome, 48);
+assert.strictEqual(harbinDaily.orderAmount, 95);
+assert.strictEqual(harbinDaily.platformFee, 2.85);
+assert.strictEqual(harbinDaily.cleanerIncome, 120);
+assert.strictEqual(harbinDaily.cleanerHourlyIncome, 40);
 assert(shanghaiDaily.orderAmount > harbinDaily.orderAmount, "Shanghai daily price should be higher than Harbin");
 
 const shanghaiDeep = miniprogramPricing.calculateOrderPrice({
@@ -507,23 +538,64 @@ const shanghaiMoveIn = miniprogramPricing.calculateOrderPrice({
   city: "上海市",
   serviceType: "开荒保洁",
   durationHours: 3,
+  areaSqm: 80,
 });
 assert(shanghaiMoveIn.orderAmount > shanghaiDeep.orderAmount, "move-in cleaning should be higher than deep cleaning");
 assert(shanghaiDeep.orderAmount > shanghaiDaily.orderAmount, "deep cleaning should be higher than daily cleaning");
 
-miniprogramPricing.CITY_PRICING["低线测试市"] = {
-  city: "低线测试市",
-  avgMonthlySalary: 5000,
-  minCleanerHourlyIncome: 40,
-};
-const protectedLowCity = miniprogramPricing.calculateOrderPrice({
-  city: "低线测试市",
-  serviceType: "日常保洁",
-  durationHours: 2,
-});
-assert.strictEqual(protectedLowCity.isMinIncomeProtected, true);
-assert(protectedLowCity.cleanerHourlyIncome >= protectedLowCity.minCleanerHourlyIncome);
+assert.strictEqual(shanghaiMoveIn.pricingMode, "area");
+assert.strictEqual(shanghaiMoveIn.billableAreaSqm, 80);
+assert.strictEqual(shanghaiMoveIn.orderAmount, 472);
+assert.strictEqual(shanghaiDaily.isMinIncomeProtected, true);
+assert(shanghaiDaily.cleanerHourlyIncome >= shanghaiDaily.minCleanerHourlyIncome);
 assert.deepStrictEqual(cloudPricing.calculateOrderPrice({ city: "上海市", serviceType: "日常保洁", durationHours: 3 }), shanghaiDaily);
+const dirtyDirectQuote = cloudPricing.calculateQuote({
+  city: "\u4e0a\u6d77\u5e02",
+  serviceType: "\u65e5\u5e38\u4fdd\u6d01",
+  durationHours: 2,
+  couponCode: "CLIENT_FAKE",
+  couponDiscount: 999,
+  customerPayAmount: 1,
+  orderAmount: 1,
+  amount: 1,
+  platformFee: 999,
+  cleanerIncome: 1,
+  platformSubsidy: 999,
+  cashBurn: 0,
+  pricingSnapshot: { customerPayAmount: 1, cleanerIncome: 1 },
+});
+assert.strictEqual(dirtyDirectQuote.customerPayAmount, 79, "calculateQuote should sanitize dirty couponDiscount");
+assert.strictEqual(dirtyDirectQuote.couponDiscount, 0, "calculateQuote should not trust raw couponDiscount");
+assert(dirtyDirectQuote.cleanerIncome >= 96, "calculateQuote should keep cleaner income protected");
+const sanitizedDirectInput = cloudPricing.sanitizePricingInput({
+  city: "\u4e0a\u6d77\u5e02",
+  serviceType: "\u5f00\u8352\u4fdd\u6d01",
+  durationHours: 4,
+  areaSize: 80,
+  couponDiscount: 999,
+  customerPayAmount: 1,
+});
+assert.deepStrictEqual(sanitizedDirectInput, {
+  city: "\u4e0a\u6d77\u5e02",
+  serviceType: "\u5f00\u8352\u4fdd\u6d01",
+  durationHours: 4,
+  areaSqm: 80,
+  areaSize: 80,
+  assignedCleanerOpenid: "",
+  couponCode: "",
+  couponDiscount: 0,
+  customerPayAmount: null,
+  orderAmount: null,
+  platformFee: null,
+  cleanerIncome: null,
+  platformSubsidy: null,
+  cashBurn: null,
+});
+assert.strictEqual(
+  cloudPricing.calculateQuote({ city: "\u4e0a\u6d77\u5e02", serviceType: "\u5f00\u8352\u4fdd\u6d01", areaSqm: 80 }).customerPayAmount,
+  cloudPricing.calculateQuote({ city: "\u4e0a\u6d77\u5e02", serviceType: "\u5f00\u8352\u4fdd\u6d01", areaSize: 80 }).customerPayAmount,
+  "areaSqm and areaSize should produce the same move-in quote"
+);
 
 const autoReview = buildAutoAcceptanceReview({ _id: "order-auto", acceptedCleanerOpenid: "cleaner-a" });
 assert.strictEqual(autoReview.rating, 5);

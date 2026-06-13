@@ -28,3 +28,14 @@
 | R-019 | 家洁师异常报备可能被其他家洁师查看 | reportCleanerException, listMyProtectionClaims | P0 | 仅被指派或已接单家洁师、订单客户、admin 可访问相关工单 | 是 | 云函数测试覆盖非参与家洁师不可报备/查看 |
 | R-020 | 微信开发者工具真实编译和人工测试本轮跳过 | miniprogram | P0 | 正式上线前必须执行人工测试清单 | 是 | 记录微信开发者工具版本、基础库版本和测试账号结果 |
 | R-021 | CloudBase 生产数据库规则和部署权限未复核 | CloudBase | P0 | 正式上线前人工复核数据库 rules、云函数权限、环境变量 | 是 | 留存复核记录 |
+
+## v0.2.3 risk update
+
+| 风险编号 | 风险描述 | 影响页面/云函数 | 严重级别 | 解决方案 | 是否上线阻塞 | 验收方式 |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-022 | 前端篡改金额、平台费或阿姨收入后创建订单 | createOrder, order-create | P0 | `createOrder` 不信任客户端金额，必须使用 quote 或服务端 fallback quote 写入 `pricingSnapshot` | 是 | 云函数测试覆盖篡改金额不生效 |
+| R-023 | 用户使用他人的 quoteId 或重复使用已使用 quote | createOrder, getPricingQuote | P0 | quote 校验 `userOpenid`、`status`、`expiresAt`、订单字段一致性，使用后标记 `used` | 是 | 云函数测试覆盖他人 quote、expired quote、used quote |
+| R-024 | 优惠券或上线价压低家洁师收入 | createPricingQuote, pricingRules | P0 | `cleanerIncome` 基于城市组收入保护计算，不随 `couponDiscount` 降低 | 是 | 云函数测试覆盖 A 组 daily 2h cleanerIncome >= 96 |
+| R-025 | 平台补贴和 cash margin 双重扣减 | pricingSnapshot | P1 | `platformSubsidy = cashBurn`，不再从 `cashGrossMargin` 二次扣减 | 否 | 云函数测试覆盖 `platformSubsidy === cashBurn` |
+| R-026 | 开荒保洁缺少面积时误按小时报价 | createPricingQuote, order-create | P0 | moveIn 必须提供 areaSqm，低于 60㎡ 按 60㎡ 起计 | 是 | 云函数测试覆盖缺少面积失败和 billableAreaSqm |
+| R-027 | 普通用户看到平台毛利、cashBurn、补贴亏损等内部经营字段 | getPricingRules, getPricingQuote, order detail/list | P0 | public quote/order pricing snapshot 白名单返回，隐藏内部字段 | 是 | 云函数测试和静态扫描覆盖内部字段不返回 |

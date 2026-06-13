@@ -91,6 +91,34 @@
   line-height: 1.5;
 }
 
+.price-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 10rpx;
+  color: #7a8580;
+  font-size: 23rpx;
+  line-height: 1.4;
+}
+
+.list-price {
+  text-decoration: line-through;
+}
+
+.discount-text {
+  color: #c05621;
+  font-weight: 800;
+}
+
+.pricing-loading,
+.quote-tip,
+.field-hint {
+  margin-top: 10rpx;
+  color: #6b7b73;
+  font-size: 23rpx;
+  line-height: 1.45;
+}
+
 .price-protect-tip {
   margin-top: 10rpx;
   padding: 10rpx 14rpx;

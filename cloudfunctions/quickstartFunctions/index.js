@@ -17,7 +17,17 @@ const {
   isOrderOverdueForAutoAcceptance,
   formatDistanceText,
 } = require("./lib/domain");
-const { calculateOrderPrice } = require("./lib/pricing");
+const {
+  QUOTE_TTL_MINUTES,
+  calculateOrderPrice,
+  calculateQuote,
+  fullPricingRule,
+  getDefaultPricingRules,
+  normalizeServiceTypeKey,
+  publicPricingQuote,
+  publicPricingRule,
+  sanitizePricingInput,
+} = require("./lib/pricing");
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV,
@@ -43,6 +53,9 @@ const COLLECTIONS = [
   "serviceStandards",
   "protectionPlans",
   "protectionClaims",
+  "pricingRules",
+  "pricingQuotes",
+  "coupons",
 ];
 
 const COMMISSION_RATE = 0.05;
@@ -154,10 +167,11 @@ function calculateCommission(orderAmount) {
 }
 
 function calculateOrderPricing(order) {
-  if (order && order.pricingSnapshot && order.pricingSnapshot.orderAmount) {
+  if (order && order.pricingSnapshot && (order.pricingSnapshot.customerPayAmount || order.pricingSnapshot.orderAmount)) {
     return {
       ...order.pricingSnapshot,
-      orderAmount: Number(order.pricingSnapshot.orderAmount),
+      orderAmount: Number(order.pricingSnapshot.orderAmount || order.pricingSnapshot.customerPayAmount),
+      customerPayAmount: Number(order.pricingSnapshot.customerPayAmount || order.pricingSnapshot.orderAmount),
       platformFee: Number(order.pricingSnapshot.platformFee || order.platformFee || 0),
       cleanerIncome: Number(order.pricingSnapshot.cleanerIncome || order.cleanerIncome || 0),
     };
@@ -167,6 +181,7 @@ function calculateOrderPricing(order) {
     city: location.city || order.city || "",
     serviceType: order.serviceType,
     durationHours: order.durationHours,
+    areaSqm: order.areaSqm || order.areaSize,
   });
 }
 
@@ -552,10 +567,38 @@ function responseForViewer(response = {}) {
   };
 }
 
+function publicResponseForCustomer(response = {}) {
+  return {
+    cleanerId: response.cleanerId || "",
+    cleanerName: response.cleanerName || "",
+    avatar: response.avatar || "",
+    avatarUrl: response.avatarUrl || "",
+    avatarText: response.avatarText || "",
+    rating: Number(response.rating || 0),
+    completedOrders: Number(response.completedOrders || 0),
+    distance: response.distance || "",
+    responseTime: response.responseTime || "",
+    quotedAmount: Number(response.quotedAmount || 0),
+    status: response.status || "",
+  };
+}
+
 function publicOrderForViewer(order, openid, context = {}) {
   if (!order) return order;
-  if (context.isAdmin || order.customerOpenid === openid) {
+  if (context.isAdmin) {
     return order;
+  }
+  if (order.customerOpenid === openid) {
+    const responses = Array.isArray(order.responses) ? order.responses : [];
+    return sanitizeOrderPricingForViewer(
+      {
+        ...order,
+        responses: responses.map(publicResponseForCustomer),
+        responseCount: Number(order.responseCount ?? responses.length),
+      },
+      openid,
+      context
+    );
   }
   const responses = Array.isArray(order.responses) ? order.responses : [];
   const myResponse = responses.find((response) => response.cleanerId === openid);
@@ -589,7 +632,7 @@ function publicOrderForViewer(order, openid, context = {}) {
   } else {
     delete next.myResponse;
   }
-  return next;
+  return sanitizeOrderPricingForViewer(next, openid, context);
 }
 
 function publicServiceStandard(standard = {}) {
@@ -653,6 +696,250 @@ function protectionPlanSnapshot(plan = {}) {
     insuranceStatusText: publicPlan.insuranceStatusText,
     version: publicPlan.version || "2026-06",
   };
+}
+
+function quoteExpiresAt(createdAt) {
+  return new Date(createdAt.getTime() + QUOTE_TTL_MINUTES * 60 * 1000).toISOString();
+}
+
+function pricingQuoteId(createdAt) {
+  return `quote_${createdAt.getTime()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function pricingQuoteNo(createdAt) {
+  const stamp = createdAt.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+  return `PQ${stamp}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+}
+
+async function enabledPricingRules() {
+  const result = await db.collection("pricingRules").where({ enabled: true }).limit(300).get().catch(() => ({ data: [] }));
+  return (result.data || []).filter((item) => item.enabled !== false).concat(getDefaultPricingRules());
+}
+
+function pricingSnapshotFromQuote(calculated, metadata = {}) {
+  const quoteId = metadata.quoteId || "";
+  const quoteNo = metadata.quoteNo || "";
+  const snapshot = {
+    quoteId,
+    quoteNo,
+    generatedBy: metadata.generatedBy || "createPricingQuote",
+    city: calculated.city,
+    cityGroup: calculated.cityGroup,
+    serviceType: calculated.serviceType,
+    serviceTypeText: calculated.serviceTypeText,
+    durationHours: Number(calculated.durationHours || 0),
+    areaSqm: Number(calculated.areaSqm || 0),
+    actualAreaSqm: Number(calculated.actualAreaSqm || calculated.areaSqm || 0),
+    billableAreaSqm: Number(calculated.billableAreaSqm || 0),
+    pricingMode: calculated.pricingMode,
+    priceRuleId: calculated.priceRuleId,
+    priceRuleVersion: calculated.priceRuleVersion,
+    listPrice: calculated.listPrice,
+    launchPrice: calculated.launchPrice,
+    customerPayAmount: calculated.customerPayAmount,
+    orderAmount: calculated.customerPayAmount,
+    couponCode: calculated.couponCode,
+    couponDiscount: calculated.couponDiscount,
+    platformFundedDiscount: calculated.platformFundedDiscount,
+    platformFeeRate: calculated.platformFeeRate,
+    platformFee: calculated.platformFee,
+    protectionFee: calculated.protectionFee,
+    insuranceCostAllocation: calculated.insuranceCostAllocation,
+    paymentFeeEstimate: calculated.paymentFeeEstimate,
+    cleanerBaseIncome: calculated.cleanerBaseIncome,
+    cleanerIncome: calculated.cleanerIncome,
+    platformSubsidy: calculated.platformSubsidy,
+    cashGrossMargin: calculated.cashGrossMargin,
+    cashBurn: calculated.cashBurn,
+    requiresSubsidy: calculated.requiresSubsidy,
+    subsidyReason: calculated.subsidyReason,
+    marginWarning: calculated.marginWarning,
+    grossMarginNote: calculated.grossMarginNote,
+    estimate: calculated.estimate,
+    pricingText: "报价由平台服务端生成，金额单位为人民币元。",
+    calculatedAt: metadata.calculatedAt || now(),
+  };
+  return snapshot;
+}
+
+function publicOrderPricingSnapshot(snapshot = {}, includeCleanerIncome = false, includeCoupon = false) {
+  if (!snapshot) return snapshot;
+  const next = {
+    quoteId: snapshot.quoteId || "",
+    quoteNo: snapshot.quoteNo || "",
+    generatedBy: snapshot.generatedBy || "",
+    city: snapshot.city || "",
+    cityGroup: snapshot.cityGroup || "",
+    serviceType: snapshot.serviceType || "",
+    serviceTypeText: snapshot.serviceTypeText || "",
+    durationHours: Number(snapshot.durationHours || 0),
+    areaSqm: Number(snapshot.areaSqm || 0),
+    actualAreaSqm: Number(snapshot.actualAreaSqm || 0),
+    billableAreaSqm: Number(snapshot.billableAreaSqm || 0),
+    pricingMode: snapshot.pricingMode || "",
+    priceRuleVersion: snapshot.priceRuleVersion || "",
+    listPrice: Number(snapshot.listPrice || 0),
+    launchPrice: Number(snapshot.launchPrice || 0),
+    customerPayAmount: Number(snapshot.customerPayAmount || snapshot.orderAmount || 0),
+    orderAmount: Number(snapshot.orderAmount || snapshot.customerPayAmount || 0),
+    platformFundedDiscount: Number(snapshot.platformFundedDiscount || 0),
+    requiresSubsidy: Boolean(snapshot.requiresSubsidy),
+    pricingText: snapshot.pricingText || "报价由平台服务端生成，金额单位为人民币元。",
+    calculatedAt: snapshot.calculatedAt || "",
+  };
+  if (includeCleanerIncome) {
+    next.cleanerIncome = Number(snapshot.cleanerIncome || 0);
+  }
+  if (includeCoupon) {
+    next.couponCode = snapshot.couponCode || "";
+    next.couponDiscount = Number(snapshot.couponDiscount || 0);
+  } else {
+    delete next.couponCode;
+    delete next.couponDiscount;
+  }
+  return next;
+}
+
+function canViewOrderCleanerIncome(order, openid, context = {}) {
+  if (context.isAdmin) return true;
+  if (!order || !openid) return false;
+  return order.acceptedCleanerOpenid === openid || order.assignedCleanerOpenid === openid || order.cleanerId === openid;
+}
+
+function sanitizeOrderPricingForViewer(order, openid, context = {}) {
+  if (!order || context.isAdmin) return order;
+  const next = { ...order };
+  const canViewCleanerIncome = canViewOrderCleanerIncome(order, openid, context);
+  const canViewCoupon = order.customerOpenid === openid;
+  if (next.pricingSnapshot) {
+    next.pricingSnapshot = publicOrderPricingSnapshot(next.pricingSnapshot, canViewCleanerIncome, canViewCoupon);
+  }
+  if (!canViewCleanerIncome) {
+    delete next.cleanerIncome;
+    delete next.cleanerBaseIncome;
+  }
+  [
+    "platformFee",
+    "platformFeeRate",
+    "couponDiscount",
+    "couponCode",
+    "platformFundedDiscount",
+    "protectionFee",
+    "platformSubsidy",
+    "cashGrossMargin",
+    "cashBurn",
+    "marginWarning",
+    "grossMarginNote",
+    "paymentFeeEstimate",
+    "insuranceCostAllocation",
+  ].forEach((key) => delete next[key]);
+  return next;
+}
+
+async function createPricingQuoteRecord(input = {}, actorOpenid, options = {}) {
+  const createdAt = options.createdAt || now();
+  const quoteId = options.quoteId || pricingQuoteId(createdAt);
+  const quoteNo = options.quoteNo || pricingQuoteNo(createdAt);
+  const rules = await enabledPricingRules();
+  const safeInput = sanitizePricingInput(input);
+  const calculated = calculateQuote(safeInput, rules);
+  const pricingSnapshot = pricingSnapshotFromQuote(calculated, {
+    quoteId,
+    quoteNo,
+    generatedBy: options.generatedBy || "createPricingQuote",
+    calculatedAt: createdAt,
+  });
+  const record = {
+    _id: quoteId,
+    quoteId,
+    quoteNo,
+    userOpenid: actorOpenid,
+    city: pricingSnapshot.city,
+    cityGroup: pricingSnapshot.cityGroup,
+    serviceType: pricingSnapshot.serviceType,
+    durationHours: pricingSnapshot.durationHours,
+    areaSqm: pricingSnapshot.areaSqm,
+    billableAreaSqm: pricingSnapshot.billableAreaSqm,
+    pricingMode: pricingSnapshot.pricingMode,
+    priceRuleId: pricingSnapshot.priceRuleId,
+    priceRuleVersion: pricingSnapshot.priceRuleVersion,
+    listPrice: pricingSnapshot.listPrice,
+    launchPrice: pricingSnapshot.launchPrice,
+    customerPayAmount: pricingSnapshot.customerPayAmount,
+    couponCode: pricingSnapshot.couponCode,
+    couponDiscount: pricingSnapshot.couponDiscount,
+    platformFundedDiscount: pricingSnapshot.platformFundedDiscount,
+    platformFeeRate: pricingSnapshot.platformFeeRate,
+    platformFee: pricingSnapshot.platformFee,
+    protectionFee: pricingSnapshot.protectionFee,
+    insuranceCostAllocation: pricingSnapshot.insuranceCostAllocation,
+    paymentFeeEstimate: pricingSnapshot.paymentFeeEstimate,
+    cleanerBaseIncome: pricingSnapshot.cleanerBaseIncome,
+    cleanerIncome: pricingSnapshot.cleanerIncome,
+    platformSubsidy: pricingSnapshot.platformSubsidy,
+    cashGrossMargin: pricingSnapshot.cashGrossMargin,
+    cashBurn: pricingSnapshot.cashBurn,
+    requiresSubsidy: pricingSnapshot.requiresSubsidy,
+    subsidyReason: pricingSnapshot.subsidyReason,
+    marginWarning: pricingSnapshot.marginWarning,
+    grossMarginNote: pricingSnapshot.grossMarginNote,
+    expiresAt: quoteExpiresAt(createdAt),
+    usedAt: "",
+    status: "active",
+    pricingSnapshot,
+    createdAt,
+    updatedAt: createdAt,
+  };
+  await db.collection("pricingQuotes").add({ data: record });
+  return record;
+}
+
+function isQuoteExpired(quote, checkedAt = now()) {
+  if (!quote || !quote.expiresAt) return false;
+  const expiresAt = new Date(quote.expiresAt);
+  return Number.isFinite(expiresAt.getTime()) && expiresAt.getTime() <= checkedAt.getTime();
+}
+
+function quoteMatchesOrderData(quote, data = {}) {
+  const snapshot = quote.pricingSnapshot || quote;
+  const city = String((data.locationSnapshot && data.locationSnapshot.city) || data.city || "").trim();
+  if (!city) return false;
+  if (snapshot.city && city !== snapshot.city) return false;
+  if (normalizeServiceTypeKey(data.serviceType) !== snapshot.serviceType) return false;
+  if (snapshot.pricingMode === "area") {
+    const areaSqm = Number(data.areaSqm || data.areaSize || 0);
+    return Number(areaSqm) === Number(snapshot.actualAreaSqm || snapshot.areaSqm || 0);
+  }
+  return Number(data.durationHours || 0) === Number(snapshot.durationHours || 0);
+}
+
+async function getValidQuoteForOrder(data = {}, openid) {
+  if (!data.quoteId) return null;
+  const quote = await findOne("pricingQuotes", { quoteId: data.quoteId });
+  if (!quote) throw AppError("报价不存在或已失效", "INVALID_INPUT");
+  if (quote.userOpenid !== openid) throw AppError("无权使用该报价", "FORBIDDEN");
+  if (quote.status !== "active") throw AppError("报价已使用或失效，请重新获取报价", "INVALID_INPUT");
+  if (isQuoteExpired(quote)) throw AppError("报价已过期，请重新获取报价", "INVALID_INPUT");
+  if (!quoteMatchesOrderData(quote, data)) throw AppError("报价与订单信息不一致，请重新获取报价", "INVALID_INPUT");
+  return quote;
+}
+
+async function consumePricingQuoteForOrder(quote, openid, consumedAt = now()) {
+  if (!quote || !quote.quoteId) throw AppError("报价不存在或已失效", "INVALID_INPUT");
+  const result = await db
+    .collection("pricingQuotes")
+    .where({ quoteId: quote.quoteId, userOpenid: openid, status: "active" })
+    .update({
+      data: {
+        status: "used",
+        usedAt: consumedAt,
+        updatedAt: consumedAt,
+      },
+    });
+  const updated = Number(result.updated ?? (result.stats && result.stats.updated) ?? 0);
+  if (updated !== 1) {
+    throw AppError("报价已使用或失效，请重新获取报价", "INVALID_INPUT");
+  }
 }
 
 function fallbackServiceStandard(serviceType = "保洁服务") {
@@ -1689,18 +1976,45 @@ async function getProtectionPlans() {
   return ok({ plans });
 }
 
+async function getPricingRules() {
+  const openid = getOpenid();
+  const viewerIsAdmin = await isAdmin(openid);
+  const rules = await enabledPricingRules();
+  return ok({ rules: rules.filter((rule) => rule.enabled !== false).map((rule) => (viewerIsAdmin ? fullPricingRule(rule) : publicPricingRule(rule))) });
+}
+
+async function createPricingQuote(data = {}) {
+  const openid = getOpenid();
+  await requireUserRole(openid, "customer");
+  const quote = await createPricingQuoteRecord(sanitizePricingInput(data), openid, { generatedBy: "createPricingQuote" });
+  return ok({ quote: publicPricingQuote(quote) });
+}
+
+async function getPricingQuote(data = {}) {
+  const openid = getOpenid();
+  const viewerIsAdmin = await isAdmin(openid);
+  const quote = await findOne("pricingQuotes", { quoteId: data.quoteId });
+  if (!quote) throw AppError("报价不存在或已失效", "INVALID_INPUT");
+  if (!viewerIsAdmin && quote.userOpenid !== openid) throw AppError("无权查看该报价", "FORBIDDEN");
+  const status = quote.status === "active" && isQuoteExpired(quote) ? "expired" : quote.status;
+  const next = { ...quote, status };
+  return ok({ quote: viewerIsAdmin ? next : publicPricingQuote(next) });
+}
+
 function normalizeOrderLocationSnapshot(data) {
-  const source = data.locationSnapshot || data;
+  const source = data.locationSnapshot || {};
+  const latitude = latitudeOf(source);
+  const longitude = longitudeOf(source);
   return {
-    province: String(source.province || "").slice(0, 30),
-    city: String(source.city || "").slice(0, 30),
-    district: String(source.district || "").slice(0, 30),
-    street: String(source.street || "").slice(0, 40),
+    province: String(source.province || data.province || "").slice(0, 30),
+    city: String(source.city || data.city || "").slice(0, 30),
+    district: String(source.district || data.district || "").slice(0, 30),
+    street: String(source.street || data.street || "").slice(0, 40),
     community: String(source.community || data.community || "").slice(0, 40),
-    detailAddress: String(source.detailAddress || "").slice(0, 80),
+    detailAddress: String(source.detailAddress || data.detailAddress || "").slice(0, 80),
     addressText: String(source.addressText || data.addressText || "").slice(0, 120),
-    latitude: latitudeOf(source),
-    longitude: longitudeOf(source),
+    latitude: latitude ?? latitudeOf(data),
+    longitude: longitude ?? longitudeOf(data),
   };
 }
 
@@ -1860,13 +2174,26 @@ async function createOrder(data) {
   const openid = getOpenid();
   await requireUserRole(openid, "customer");
   assertCreateOrderInput(data);
-  if ((data.serviceType === "深度保洁" || data.serviceType === "开荒保洁") && Number(data.areaSize || 0) <= 0) {
-    throw AppError("请填写面积后再发布");
-  }
   const locationSnapshot = normalizeOrderLocationSnapshot(data);
-  const pricing = calculateOrderPricing({ ...data, locationSnapshot });
-  if (!pricing.orderAmount) {
-    throw AppError("订单金额计算失败，请检查服务类型和时长");
+  const areaSqm = Number(data.areaSqm || data.areaSize || 0);
+  if (normalizeServiceTypeKey(data.serviceType) === "moveIn" && areaSqm <= 0) {
+    throw AppError("开荒保洁请填写面积", "INVALID_INPUT");
+  }
+  const quoteOrderInput = sanitizePricingInput({
+    quoteId: data.quoteId || "",
+    city: locationSnapshot.city,
+    serviceType: data.serviceType,
+    durationHours: data.durationHours,
+    areaSqm,
+    areaSize: areaSqm,
+    assignedCleanerOpenid: data.assignedCleanerOpenid || "",
+  });
+  const quote =
+    (await getValidQuoteForOrder({ ...quoteOrderInput, quoteId: data.quoteId || "", locationSnapshot }, openid)) ||
+    (await createPricingQuoteRecord(quoteOrderInput, openid, { generatedBy: "createOrder_fallback" }));
+  const pricingSnapshot = { ...(quote.pricingSnapshot || {}) };
+  if (!pricingSnapshot.customerPayAmount && !pricingSnapshot.orderAmount) {
+    throw AppError("订单金额计算失败，请检查服务类型和时长", "INVALID_INPUT");
   }
 
   if (data.publishMode === "assigned") {
@@ -1880,21 +2207,10 @@ async function createOrder(data) {
   const status = data.publishMode === "assigned" ? "assigned_waiting_accept" : "waiting_response";
   const serviceStandard = await getDefaultServiceStandard(data.serviceType);
   const protectionPlan = await getDefaultProtectionPlan();
-  const pricingSnapshot = {
-    city: pricing.city,
-    cityFactor: pricing.cityFactor,
-    serviceTypeFactor: pricing.serviceTypeFactor,
-    baseHourlyPrice: pricing.baseHourlyPrice,
-    durationHours: pricing.durationHours,
-    orderAmount: pricing.orderAmount,
-    platformFee: pricing.platformFee,
-    cleanerIncome: pricing.cleanerIncome,
-    cleanerHourlyIncome: pricing.cleanerHourlyIncome,
-    minCleanerHourlyIncome: pricing.minCleanerHourlyIncome,
-    isMinIncomeProtected: pricing.isMinIncomeProtected,
-    calculatedAt: createdAt,
-  };
   const displayOrder = await nextDisplayOrderNo(locationSnapshot, createdAt);
+  if (quote.quoteId) {
+    await consumePricingQuoteForOrder(quote, openid, createdAt);
+  }
   const result = await db.collection("orders").add({
     data: {
       customerOpenid: openid,
@@ -1914,17 +2230,34 @@ async function createOrder(data) {
       longitude: locationSnapshot.longitude,
       locationSnapshot,
       ...displayOrder,
-      areaSize: data.areaSize || "",
-      durationHours: Number(data.durationHours || 0),
+      areaSize: data.areaSize || data.areaSqm || "",
+      areaSqm,
+      billableAreaSqm: pricingSnapshot.billableAreaSqm || 0,
+      durationHours: Number(data.durationHours || pricingSnapshot.durationHours || 0),
       scheduledAt: data.scheduledAt,
       note: data.note || "",
       contactPhone: data.contactPhone,
       contactWechat: data.contactWechat || "",
-      amount: pricing.orderAmount,
-      estimatedPrice: pricing.orderAmount,
-      orderAmount: pricing.orderAmount,
-      platformFee: pricing.platformFee,
-      cleanerIncome: pricing.cleanerIncome,
+      quoteId: quote.quoteId || pricingSnapshot.quoteId || "",
+      priceRuleVersion: pricingSnapshot.priceRuleVersion || "",
+      listPrice: pricingSnapshot.listPrice || 0,
+      launchPrice: pricingSnapshot.launchPrice || 0,
+      customerPayAmount: pricingSnapshot.customerPayAmount || pricingSnapshot.orderAmount || 0,
+      amount: pricingSnapshot.customerPayAmount || pricingSnapshot.orderAmount || 0,
+      estimatedPrice: pricingSnapshot.customerPayAmount || pricingSnapshot.orderAmount || 0,
+      orderAmount: pricingSnapshot.customerPayAmount || pricingSnapshot.orderAmount || 0,
+      couponDiscount: pricingSnapshot.couponDiscount || 0,
+      platformFundedDiscount: pricingSnapshot.platformFundedDiscount || 0,
+      platformFeeRate: pricingSnapshot.platformFeeRate || 0,
+      platformFee: pricingSnapshot.platformFee || 0,
+      protectionFee: pricingSnapshot.protectionFee || 0,
+      insuranceCostAllocation: pricingSnapshot.insuranceCostAllocation || 0,
+      paymentFeeEstimate: pricingSnapshot.paymentFeeEstimate || 0,
+      cleanerBaseIncome: pricingSnapshot.cleanerBaseIncome || 0,
+      cleanerIncome: pricingSnapshot.cleanerIncome || 0,
+      platformSubsidy: pricingSnapshot.platformSubsidy || 0,
+      cashGrossMargin: pricingSnapshot.cashGrossMargin || 0,
+      cashBurn: pricingSnapshot.cashBurn || 0,
       pricingSnapshot,
       protectionPlanId: protectionPlan._id || protectionPlan.planCode || "trial-basic",
       protectionSnapshot: protectionPlanSnapshot(protectionPlan),
@@ -3405,6 +3738,9 @@ const actions = {
   getPlatformStats,
   getServiceStandards,
   getProtectionPlans,
+  getPricingRules,
+  createPricingQuote,
+  getPricingQuote,
   createOrder,
   listOpenOrders,
   listAssignedOrders,
