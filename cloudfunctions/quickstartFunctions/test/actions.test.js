@@ -2546,6 +2546,156 @@ async function runTrustRiskWorkflowTests() {
   }
 }
 
+async function runPlatformOpsWorkflowTests() {
+  const paymentOrder = seedOrder({
+    _id: "ops-payment-order",
+    customerOpenid: "customer-a",
+    status: "waiting_payment",
+    paymentStatus: "pending_pay",
+    settlementStatus: "pending",
+    orderAmount: 129,
+    customerPayAmount: 129,
+    cleanerIncome: 100,
+    platformFee: 29,
+  });
+  const paymentDb = createPrivacyDB({ orders: [paymentOrder] });
+  const customer = await loadFunction({ openid: "customer-a", db: paymentDb, env: { APP_ENV: "production" } });
+  try {
+    const firstIntent = await invoke(customer.main, {
+      action: "createPaymentIntent",
+      data: { orderId: "ops-payment-order", idempotencyKey: "same-key" },
+    });
+    assert.strictEqual(firstIntent.success, true, "createPaymentIntent should succeed");
+    const secondIntent = await invoke(customer.main, {
+      action: "createPaymentIntent",
+      data: { orderId: "ops-payment-order", idempotencyKey: "same-key" },
+    });
+    assert.strictEqual(secondIntent.success, true, "idempotent createPaymentIntent should succeed");
+    assert.strictEqual(secondIntent.data.paymentIntent.intentId, firstIntent.data.paymentIntent.intentId);
+    const thirdIntent = await invoke(customer.main, {
+      action: "createPaymentIntent",
+      data: { orderId: "ops-payment-order", idempotencyKey: "different-key" },
+    });
+    assert.strictEqual(thirdIntent.success, true, "same pending order should not create duplicate payment intent with different key");
+    assert.strictEqual(thirdIntent.data.paymentIntent.intentId, firstIntent.data.paymentIntent.intentId);
+    assert.strictEqual(paymentDb.data.paymentIntents.length, 1, "same unpaid order should not create duplicate payment intents");
+
+    const paid = await invoke(customer.main, {
+      action: "handlePaymentCallback",
+      data: {
+        intentId: firstIntent.data.paymentIntent.intentId,
+        eventId: "evt-paid-1",
+        status: "paid",
+        amount: 129,
+        orderId: "ops-payment-order",
+      },
+    });
+    assert.strictEqual(paid.success, true, "payment callback should mark paid");
+    assert.strictEqual(paymentDb.data.orders[0].status, "confirmed", "paid callback should move order to confirmed compatibility state");
+    assert.strictEqual(paymentDb.data.orders[0].escrowStatus, "held");
+    assert.strictEqual(paymentDb.data.orders[0].opsState, "PAID");
+    const duplicate = await invoke(customer.main, {
+      action: "handlePaymentCallback",
+      data: {
+        intentId: firstIntent.data.paymentIntent.intentId,
+        eventId: "evt-paid-1",
+        status: "paid",
+        amount: 129,
+        orderId: "ops-payment-order",
+      },
+    });
+    assert.strictEqual(duplicate.success, true, "duplicate callback should be idempotent");
+    assert.strictEqual(duplicate.data.duplicate, true);
+    assert.strictEqual(paymentDb.data.paymentCallbacks.length, 1, "duplicate callback event should not create duplicate callback records");
+  } finally {
+    customer.restore();
+  }
+
+  const opsStateDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "ops-state-order",
+        customerOpenid: "customer-a",
+        acceptedCleanerOpenid: "cleaner-a",
+        status: "confirmed",
+        paymentStatus: "escrowed",
+      }),
+    ],
+  });
+  const cleaner = await loadFunction({ openid: "cleaner-a", db: opsStateDb, env: { APP_ENV: "production" } });
+  try {
+    const inService = await invoke(cleaner.main, { action: "updateOrderStatus", data: { orderId: "ops-state-order", status: "in_service" } });
+    assert.strictEqual(inService.success, true, "accepted cleaner should start service");
+    assert.strictEqual(opsStateDb.data.orders[0].opsState, "IN_SERVICE");
+    const waitingComplete = await invoke(cleaner.main, {
+      action: "updateOrderStatus",
+      data: { orderId: "ops-state-order", status: "waiting_acceptance", completionPhotoUrls: ["cloud://proof-a"] },
+    });
+    assert.strictEqual(waitingComplete.success, true, "accepted cleaner should submit completion");
+    assert.strictEqual(opsStateDb.data.orders[0].opsState, "COMPLETED");
+  } finally {
+    cleaner.restore();
+  }
+
+  const settlementDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "ops-settle-order",
+        status: "completed",
+        paymentStatus: "escrowed",
+        settlementStatus: "pending",
+        cleanerIncome: 100,
+        platformFee: 29,
+      }),
+    ],
+    adminUsers: [{ _id: "admin-a", openid: "admin-a", role: "admin", enabled: true }],
+  });
+  const admin = await loadFunction({ openid: "admin-a", db: settlementDb, env: { APP_ENV: "production" } });
+  try {
+    const settlement = await invoke(admin.main, {
+      action: "settleOrder",
+      data: { orderId: "ops-settle-order", penalty: 20, bonus: 5 },
+    });
+    assert.strictEqual(settlement.success, true, "settleOrder should succeed");
+    assert.strictEqual(settlement.data.settlement.payoutAmount, 85);
+    assert.strictEqual(settlementDb.data.orders[0].settlementStatus, "settled");
+    assert.strictEqual(settlementDb.data.orders[0].opsState, "SETTLED");
+    const reconcile = await invoke(admin.main, { action: "reconcileOrders", data: {} });
+    assert.strictEqual(reconcile.success, true);
+    assert(Array.isArray(reconcile.data.report.mismatches), "reconcileOrders should return mismatches");
+    const adminOrders = await invoke(admin.main, { action: "adminListOrders", data: { status: "completed" } });
+    assert.strictEqual(adminOrders.success, true, "adminListOrders should succeed for admin");
+    assert.strictEqual(adminOrders.data.orders.length, 1, "adminListOrders should return matching orders");
+    const adjusted = await invoke(admin.main, {
+      action: "adjustPayout",
+      data: { orderId: "ops-settle-order", penalty: 10, bonus: 2, reason: "SLA correction" },
+    });
+    assert.strictEqual(adjusted.success, true, "adjustPayout should succeed for admin");
+    assert.strictEqual(adjusted.data.settlement.payoutAmount, 92);
+    const refunded = await invoke(admin.main, { action: "forceRefund", data: { orderId: "ops-settle-order", reason: "manual ops test" } });
+    assert.strictEqual(refunded.success, true, "forceRefund should succeed for admin");
+    assert.strictEqual(settlementDb.data.orders[0].paymentStatus, "refunded");
+  } finally {
+    admin.restore();
+  }
+
+  const mismatchDb = createPrivacyDB({
+    orders: [seedOrder({ _id: "ops-mismatch-order", paymentStatus: "unpaid", settlementStatus: "pending" })],
+    paymentIntents: [{ _id: "intent-paid", intentId: "intent-paid", orderId: "ops-mismatch-order", status: "paid", amount: 79 }],
+    settlements: [{ _id: "settle-bad", orderId: "ops-mismatch-order", cleanerIncome: 100, penalty: 10, bonus: 0, payoutAmount: 100 }],
+    adminUsers: [{ _id: "admin-a", openid: "admin-a", role: "admin", enabled: true }],
+  });
+  const mismatchAdmin = await loadFunction({ openid: "admin-a", db: mismatchDb, env: { APP_ENV: "production" } });
+  try {
+    const orderReport = await invoke(mismatchAdmin.main, { action: "reconcileOrders", data: {} });
+    assert(orderReport.data.report.mismatches.some((item) => item.type === "paid_intent_order_not_paid"));
+    const payoutReport = await invoke(mismatchAdmin.main, { action: "reconcilePayouts", data: {} });
+    assert(payoutReport.data.report.mismatches.some((item) => item.type === "payout_amount_mismatch"));
+  } finally {
+    mismatchAdmin.restore();
+  }
+}
+
 function listRegisteredPages() {
   const appJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../../miniprogram/app.json"), "utf8"));
   return appJson.pages || [];
@@ -2603,6 +2753,8 @@ function runStaticMiniprogramTests() {
   const behaviorGraphStoreText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/behavior/behaviorGraphStore.js"), "utf8");
   const decisionCalibratorText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/decision/decisionCalibrator.js"), "utf8");
   const v024QaText = fs.readFileSync(path.join(root, "docs/qa/v0.2.4-wechat-manual-test-checklist.md"), "utf8");
+  const v025QaPath = path.join(root, "docs/qa/v0.2.5-wechat-manual-test-checklist.md");
+  const v025QaText = fs.existsSync(v025QaPath) ? fs.readFileSync(v025QaPath, "utf8") : "";
   assert(fs.existsSync(path.join(root, "docs/qa/v0.2.4-wechat-manual-test-checklist.md")), "v0.2.4 manual QA checklist should exist");
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
   assert(orderCreateText.includes("createPricingQuote"), "order-create should request server pricing quotes");
@@ -2635,6 +2787,38 @@ function runStaticMiniprogramTests() {
   assert(trustRiskText.includes("calibrateDecision"), "trust-risk engine should use calibrated decisions");
   assert(cloudIndexText.includes("behaviorGraphEdges"), "cloud function should persist behavior graph edges");
   assert(v024QaText.includes("r5 稳定层检查"), "v0.2.4 QA checklist should include r5 stabilization checks");
+  [
+    "cloudfunctions/quickstartFunctions/lib/payment/paymentIntent.js",
+    "cloudfunctions/quickstartFunctions/lib/payment/paymentCallback.js",
+    "cloudfunctions/quickstartFunctions/lib/payment/paymentStatus.js",
+    "cloudfunctions/quickstartFunctions/lib/settlement/settlementEngine.js",
+    "cloudfunctions/quickstartFunctions/lib/settlement/cleanerPayout.js",
+    "cloudfunctions/quickstartFunctions/lib/sla/slaEngine.js",
+    "cloudfunctions/quickstartFunctions/lib/admin/orderAdmin.js",
+    "cloudfunctions/quickstartFunctions/lib/admin/cleanerAdmin.js",
+    "cloudfunctions/quickstartFunctions/lib/admin/payoutAdmin.js",
+    "cloudfunctions/quickstartFunctions/lib/reconciliation/orderReconcile.js",
+    "cloudfunctions/quickstartFunctions/lib/reconciliation/payoutReconcile.js",
+  ].forEach((file) => {
+    assert(fs.existsSync(path.join(root, file)), `${file} should exist for v0.2.5 platform ops`);
+  });
+  [
+    "createPaymentIntent",
+    "handlePaymentCallback",
+    "getPaymentStatus",
+    "settleOrder",
+    "forceRefund",
+    "adminListOrders",
+    "adjustPayout",
+    "reconcileOrders",
+    "reconcilePayouts",
+  ].forEach((action) => {
+    assert(cloudIndexText.includes(action), `${action} should be registered for v0.2.5 platform ops`);
+  });
+  assert(fs.existsSync(v025QaPath), "v0.2.5 manual QA checklist should exist");
+  ["支付意图", "重复支付", "结算", "SLA", "对账", "真实微信支付未接入"].forEach((phrase) => {
+    assert(v025QaText.includes(phrase), `v0.2.5 QA checklist should mention ${phrase}`);
+  });
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
   assert(orderDetailText.includes("openClaimCreate"), "order-detail should include claim create entry");
   assert(orderDetailText.includes("openExceptionReport"), "order-detail should include cleaner exception entry");
@@ -2717,6 +2901,7 @@ runProductionGateTests()
   .then(runSupportTicketTests)
   .then(runProtectionWorkflowTests)
   .then(runTrustRiskWorkflowTests)
+  .then(runPlatformOpsWorkflowTests)
   .then(runStaticMiniprogramTests)
   .then(() => {
     console.log("action tests passed");

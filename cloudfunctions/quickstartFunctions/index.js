@@ -41,6 +41,14 @@ const {
   trustLevelFromScore,
 } = require("./lib/trust-risk");
 const { createBehaviorGraphStore } = require("./lib/behavior/behaviorGraphStore");
+const { createPaymentIntentSnapshot } = require("./lib/payment/paymentIntent");
+const { applyPaymentCallback } = require("./lib/payment/paymentCallback");
+const { createSettlementSnapshot } = require("./lib/settlement/settlementEngine");
+const { calculateSlaPenalty } = require("./lib/sla/slaEngine");
+const { normalizeOrderAdminFilter } = require("./lib/admin/orderAdmin");
+const { normalizePayoutAdjustment } = require("./lib/admin/payoutAdmin");
+const { reconcileOrders: reconcileOrderRecords } = require("./lib/reconciliation/orderReconcile");
+const { reconcilePayouts: reconcilePayoutRecords } = require("./lib/reconciliation/payoutReconcile");
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV,
@@ -72,6 +80,11 @@ const COLLECTIONS = [
   "cleanerTrustProfile",
   "orderRiskProfile",
   "behaviorGraphEdges",
+  "paymentIntents",
+  "paymentCallbacks",
+  "settlements",
+  "payoutAdjustments",
+  "reconciliationReports",
 ];
 
 const COMMISSION_RATE = 0.05;
@@ -1250,6 +1263,7 @@ async function completeOrderWithReview(order, reviewInput, options = {}) {
     completedAt: updateTime,
     paymentStatus: "settled",
     settlementStatus: "settled",
+    opsState: "COMPLETED",
     settledAt: updateTime,
     cleanerId: order.cleanerId || order.acceptedCleanerOpenid || "",
     orderAmount: Number(order.orderAmount || order.finalPrice || order.actualPrice || order.estimatedPrice || pricing.orderAmount),
@@ -2467,6 +2481,7 @@ async function createOrder(data) {
       lastClaimAt: "",
       paymentStatus: "unpaid",
       settlementStatus: "pending",
+      opsState: "CREATED",
       status,
       responses: [],
       declineHistory: [],
@@ -2896,7 +2911,10 @@ async function updateOrderStatus(data) {
   }
   const statusTime = {};
   if (nextStatus === "cancelled") statusTime.cancelledAt = updateTime;
-  if (nextStatus === "in_service") statusTime.startedAt = updateTime;
+  if (nextStatus === "in_service") {
+    statusTime.startedAt = updateTime;
+    statusTime.opsState = "IN_SERVICE";
+  }
   if (nextStatus === "waiting_complete") {
     const completionPhotoUrls = normalizeReviewImageUrls(data.completionPhotoUrls || data.completionImageUrls || data.serviceProofImageUrls);
     statusTime.serviceFinishedAt = updateTime;
@@ -2909,6 +2927,7 @@ async function updateOrderStatus(data) {
       url: fileID,
       uploadedAt: updateTime,
     }));
+    statusTime.opsState = "COMPLETED";
   }
   await db.collection("orders").doc(data.orderId).update({
     data: {
@@ -4120,6 +4139,262 @@ async function flagOrder(data = {}) {
   return ok({ orderId: order._id, riskProfile: risk });
 }
 
+function publicPaymentIntent(intent = {}) {
+  return {
+    intentId: intent.intentId || intent._id || "",
+    orderId: intent.orderId || "",
+    amount: Number(intent.amount || 0),
+    currency: intent.currency || "CNY",
+    status: intent.status || "pending",
+    escrowStatus: intent.escrowStatus || "",
+    paymentProvider: intent.paymentProvider || "manual_stub",
+    createdAt: intent.createdAt || "",
+    updatedAt: intent.updatedAt || "",
+  };
+}
+
+async function findPaymentIntentByIntentId(intentId) {
+  return findOne("paymentIntents", { intentId }).catch(() => null);
+}
+
+async function createPaymentIntent(data = {}) {
+  const openid = getOpenid();
+  const order = await getOrder(data.orderId);
+  if (!order) throw AppError("订单不存在", "INVALID_INPUT");
+  const viewerIsAdmin = await isAdmin(openid);
+  if (!viewerIsAdmin && order.customerOpenid !== openid) {
+    throw AppError("无权为该订单创建支付意图", "FORBIDDEN");
+  }
+  if (!["waiting_payment", "confirmed"].includes(order.status) && normalizePaymentStatus(order) !== "pending_pay") {
+    throw AppError("当前订单不需要支付", "INVALID_STATUS");
+  }
+  await safeCreateCollection("paymentIntents");
+  const createdAt = now();
+  const snapshot = createPaymentIntentSnapshot(order, {
+    idempotencyKey: data.idempotencyKey || data.requestId || order._id,
+    createdAt,
+    userOpenid: order.customerOpenid,
+  });
+  const existingByKey = await findOne("paymentIntents", { intentKey: snapshot.intentKey }).catch(() => null);
+  if (existingByKey) return ok({ paymentIntent: publicPaymentIntent(existingByKey), idempotent: true });
+  const existingActive = await findOne("paymentIntents", { orderId: order._id, status: "pending" }).catch(() => null);
+  if (existingActive) return ok({ paymentIntent: publicPaymentIntent(existingActive), idempotent: true });
+  await db.collection("paymentIntents").add({ data: snapshot });
+  await db.collection("orders").doc(order._id).update({
+    data: {
+      paymentIntentId: snapshot.intentId,
+      paymentIntentStatus: "pending",
+      opsState: order.opsState || "CREATED",
+      updatedAt: createdAt,
+    },
+  });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: viewerIsAdmin ? "admin" : "customer",
+    action: "createPaymentIntent",
+    targetType: "paymentIntent",
+    targetId: snapshot.intentId,
+    after: { orderId: order._id, amount: snapshot.amount, status: "pending" },
+  });
+  return ok({ paymentIntent: publicPaymentIntent(snapshot), idempotent: false });
+}
+
+async function handlePaymentCallback(data = {}) {
+  const intent = await findPaymentIntentByIntentId(data.intentId || data.paymentIntentId);
+  if (!intent) throw AppError("支付意图不存在", "INVALID_INPUT");
+  const duplicate = await findOne("paymentCallbacks", { eventId: data.eventId }).catch(() => null);
+  if (duplicate) {
+    return ok({ paymentIntent: publicPaymentIntent(intent), duplicate: true });
+  }
+  let nextIntent;
+  try {
+    nextIntent = applyPaymentCallback(intent, data);
+  } catch (error) {
+    throw AppError(error.message, "INVALID_INPUT");
+  }
+  const order = await getOrder(intent.orderId);
+  if (!order) throw AppError("订单不存在", "INVALID_INPUT");
+  await safeCreateCollection("paymentCallbacks");
+  await db.collection("paymentCallbacks").add({
+    data: {
+      eventId: data.eventId,
+      intentId: intent.intentId,
+      orderId: intent.orderId,
+      status: data.status,
+      amount: Number(data.amount || 0),
+      createdAt: now(),
+    },
+  });
+  await db.collection("paymentIntents").doc(intent._id).update({ data: nextIntent });
+  const updateData = {
+    paymentIntentStatus: nextIntent.status,
+    updatedAt: now(),
+  };
+  if (nextIntent.status === "paid") {
+    updateData.status = "confirmed";
+    updateData.paymentStatus = "escrowed";
+    updateData.escrowStatus = "held";
+    updateData.opsState = "PAID";
+    updateData.paidAt = nextIntent.paidAt || now();
+  }
+  if (nextIntent.status === "failed") {
+    updateData.paymentStatus = "pending_pay";
+    updateData.escrowStatus = "";
+  }
+  if (nextIntent.status === "refunded") {
+    updateData.paymentStatus = "refunded";
+    updateData.escrowStatus = "refunded";
+    updateData.opsState = "REFUNDED";
+  }
+  await db.collection("orders").doc(order._id).update({ data: updateData });
+  await writeAuditLog({
+    actorOpenid: "payment_callback",
+    actorRole: "system",
+    action: "handlePaymentCallback",
+    targetType: "paymentIntent",
+    targetId: intent.intentId,
+    before: { status: intent.status },
+    after: { status: nextIntent.status, orderId: order._id },
+  });
+  return ok({ paymentIntent: publicPaymentIntent(nextIntent), duplicate: false });
+}
+
+async function getPaymentStatus(data = {}) {
+  const openid = getOpenid();
+  const intent = await findPaymentIntentByIntentId(data.intentId || data.paymentIntentId);
+  if (!intent) throw AppError("支付意图不存在", "INVALID_INPUT");
+  const viewerIsAdmin = await isAdmin(openid);
+  if (!viewerIsAdmin && intent.userOpenid !== openid) throw AppError("无权查看支付状态", "FORBIDDEN");
+  return ok({ paymentIntent: publicPaymentIntent(intent) });
+}
+
+async function settleOrder(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const order = await getOrder(data.orderId);
+  if (!order) throw AppError("订单不存在", "INVALID_INPUT");
+  const existing = await findOne("settlements", { orderId: order._id }).catch(() => null);
+  if (existing) return ok({ settlement: existing, idempotent: true });
+  let settlement;
+  try {
+    settlement = createSettlementSnapshot(order, {
+      penalty: data.penalty || 0,
+      bonus: data.bonus || 0,
+      createdAt: now(),
+    });
+  } catch (error) {
+    throw AppError(error.message, "INVALID_STATUS");
+  }
+  await safeCreateCollection("settlements");
+  await db.collection("settlements").add({ data: settlement });
+  await db.collection("orders").doc(order._id).update({
+    data: {
+      settlementStatus: "settled",
+      escrowStatus: "released",
+      opsState: "SETTLED",
+      settledAt: settlement.createdAt,
+      updatedAt: settlement.updatedAt,
+    },
+  });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "settleOrder",
+    targetType: "settlement",
+    targetId: settlement.settlementId,
+    after: { orderId: order._id, payoutAmount: settlement.payoutAmount, penalty: settlement.penalty, bonus: settlement.bonus },
+  });
+  return ok({ settlement, idempotent: false });
+}
+
+async function forceRefund(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const order = await getOrder(data.orderId);
+  if (!order) throw AppError("订单不存在", "INVALID_INPUT");
+  const intent = (await findOne("paymentIntents", { orderId: order._id, status: "paid" }).catch(() => null)) || null;
+  const updatedAt = now();
+  if (intent) {
+    await db.collection("paymentIntents").doc(intent._id).update({ data: { status: "refunded", refundedAt: updatedAt, updatedAt } });
+  }
+  await db.collection("orders").doc(order._id).update({
+    data: {
+      paymentStatus: "refunded",
+      paymentIntentStatus: "refunded",
+      escrowStatus: "refunded",
+      opsState: "REFUNDED",
+      refundedAt: updatedAt,
+      updatedAt,
+    },
+  });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "forceRefund",
+    targetType: "order",
+    targetId: order._id,
+    after: { paymentStatus: "refunded", hasPaymentIntent: Boolean(intent) },
+    metadata: { reason: String(data.reason || "").slice(0, 120) },
+  });
+  return ok({ orderId: order._id, refunded: true });
+}
+
+async function adminListOrders(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const filter = normalizeOrderAdminFilter(data);
+  const result = await db.collection("orders").orderBy("updatedAt", "desc").limit(filter.limit).get();
+  let orders = result.data || [];
+  if (filter.status) orders = orders.filter((order) => order.status === filter.status);
+  if (filter.paymentStatus) orders = orders.filter((order) => order.paymentStatus === filter.paymentStatus);
+  if (filter.settlementStatus) orders = orders.filter((order) => order.settlementStatus === filter.settlementStatus);
+  return ok({ orders });
+}
+
+async function adjustPayout(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const settlement = await findOne("settlements", { orderId: data.orderId }).catch(() => null);
+  if (!settlement) throw AppError("结算记录不存在", "INVALID_INPUT");
+  const adjustment = normalizePayoutAdjustment(data);
+  const next = createSettlementSnapshot(
+    { ...settlement, _id: settlement.orderId, status: "completed", paymentStatus: "escrowed" },
+    { penalty: adjustment.penalty, bonus: adjustment.bonus, settlementId: settlement.settlementId || settlement._id, createdAt: settlement.createdAt || now() }
+  );
+  await db.collection("settlements").doc(settlement._id).update({ data: { ...next, adjustmentReason: adjustment.reason, updatedAt: now() } });
+  await safeCreateCollection("payoutAdjustments");
+  await db.collection("payoutAdjustments").add({
+    data: { orderId: settlement.orderId, ...adjustment, actorOpenid: openid, createdAt: now() },
+  });
+  return ok({ settlement: next });
+}
+
+async function reconcileOrders(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const orders = await getCollectionData("orders").catch(() => []);
+  const paymentIntents = await getCollectionData("paymentIntents").catch(() => []);
+  const settlements = await getCollectionData("settlements").catch(() => []);
+  const report = reconcileOrderRecords({ orders, paymentIntents, settlements });
+  await safeCreateCollection("reconciliationReports");
+  await db.collection("reconciliationReports").add({
+    data: { type: "orders", report, createdAt: now(), actorOpenid: openid },
+  });
+  return ok({ report });
+}
+
+async function reconcilePayouts(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const settlements = await getCollectionData("settlements").catch(() => []);
+  const report = reconcilePayoutRecords({ settlements });
+  await safeCreateCollection("reconciliationReports");
+  await db.collection("reconciliationReports").add({
+    data: { type: "payouts", report, createdAt: now(), actorOpenid: openid },
+  });
+  return ok({ report });
+}
+
 async function autoAcceptOverdueOrders(data) {
   const openid = getOpenid();
   await requireAdmin(openid);
@@ -4196,6 +4471,15 @@ const actions = {
   updateProtectionClaimStatus,
   submitServiceProof,
   reportCleanerException,
+  createPaymentIntent,
+  handlePaymentCallback,
+  getPaymentStatus,
+  settleOrder,
+  forceRefund,
+  adminListOrders,
+  adjustPayout,
+  reconcileOrders,
+  reconcilePayouts,
   blockCleaner,
   unblockCleaner,
   adjustTrustScore,
