@@ -2359,6 +2359,193 @@ async function runProtectionWorkflowTests() {
   }
 }
 
+async function runTrustRiskWorkflowTests() {
+  const blockedDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "risk-blocked-order",
+        publishMode: "public",
+        status: "waiting_response",
+        acceptedCleanerOpenid: "",
+        cleanerId: "",
+        responses: [],
+      }),
+    ],
+    cleanerTrustProfile: [
+      { _id: "trust-cleaner-a", cleanerId: "cleaner-a", trustScore: 0, trustLevel: "blocked", updatedAt: "2026-06-12T00:00:00.000Z" },
+    ],
+  });
+  const blockedCleaner = await loadFunction({ openid: "cleaner-a", db: blockedDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(blockedCleaner.main, { action: "acceptOrder", data: { orderId: "risk-blocked-order" } }),
+      "FORBIDDEN",
+      null,
+      "blocked cleaner acceptOrder"
+    );
+    assert.strictEqual(blockedDb.data.orders[0].status, "waiting_response", "blocked accept should not mutate order");
+  } finally {
+    blockedCleaner.restore();
+  }
+
+  const restrictDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "risk-restrict-order",
+        publishMode: "public",
+        status: "waiting_response",
+        acceptedCleanerOpenid: "",
+        cleanerId: "",
+        responses: [],
+      }),
+    ],
+    orderRiskProfile: [
+      { _id: "risk-restrict-order", orderId: "risk-restrict-order", riskScore: 60, riskLevel: "high", decision: "RESTRICT" },
+    ],
+  });
+  const restrictCleaner = await loadFunction({ openid: "cleaner-a", db: restrictDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(restrictCleaner.main, { action: "acceptOrder", data: { orderId: "risk-restrict-order" } }),
+      "REVIEW_REQUIRED",
+      null,
+      "restricted risk acceptOrder"
+    );
+    assert.strictEqual(restrictDb.data.orders[0].status, "waiting_response", "restricted accept should not mutate order");
+  } finally {
+    restrictCleaner.restore();
+  }
+
+  const listRiskDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "risk-hidden-order",
+        publishMode: "public",
+        status: "waiting_response",
+        acceptedCleanerOpenid: "",
+        cleanerId: "",
+        responses: [],
+      }),
+      seedOrder({
+        _id: "risk-visible-order",
+        publishMode: "public",
+        status: "waiting_response",
+        acceptedCleanerOpenid: "",
+        cleanerId: "",
+        responses: [],
+      }),
+    ],
+    orderRiskProfile: [
+      { _id: "risk-hidden-order", orderId: "risk-hidden-order", riskScore: 82, riskLevel: "critical", decision: "HIGH_REVIEW" },
+      { _id: "risk-visible-order", orderId: "risk-visible-order", riskScore: 12, riskLevel: "low", decision: "ALLOW" },
+    ],
+  });
+  const listCleaner = await loadFunction({ openid: "cleaner-b", db: listRiskDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(listCleaner.main, { action: "listOpenOrders", data: { scope: "all" } });
+    assert.strictEqual(result.success, true);
+    assert(!result.data.some((order) => order._id === "risk-hidden-order"), "high risk order should be hidden from listOpenOrders");
+    assert(result.data.some((order) => order._id === "risk-visible-order"), "low risk order should remain visible");
+  } finally {
+    listCleaner.restore();
+  }
+
+  const createRiskDb = createPrivacyDB({ orders: [] });
+  const createCustomer = await loadFunction({ openid: "customer-a", db: createRiskDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(createCustomer.main, {
+      action: "createOrder",
+      data: {
+        publishMode: "public",
+        serviceType: "\u65e5\u5e38\u4fdd\u6d01",
+        city: "\u4e0a\u6d77\u5e02",
+        district: "\u6d66\u4e1c\u65b0\u533a",
+        street: "\u82b1\u6728\u8857\u9053",
+        community: "\u8bd5\u70b9\u5c0f\u533a",
+        addressText: "\u4e0a\u6d77\u5e02\u6d66\u4e1c\u65b0\u533a\u8bd5\u70b9\u5c0f\u533a",
+        durationHours: 2,
+        scheduledAt: "2026-06-20 09:00",
+        contactPhone: "13800000000",
+      },
+    });
+    assert.strictEqual(result.success, true, "createOrder should attach a risk profile");
+    const order = createRiskDb.data.orders.find((item) => item._id === result.data.orderId);
+    assert.strictEqual(typeof order.riskScore, "number");
+    assert(order.riskLevel, "order should store riskLevel");
+    assert(createRiskDb.data.orderRiskProfile.some((item) => item.orderId === result.data.orderId), "createOrder should write orderRiskProfile");
+    assert(
+      createRiskDb.data.behaviorGraphEdges.some((edge) => edge.orderId === result.data.orderId && edge.edgeType === "order_created"),
+      "createOrder should persist an order_created behavior graph edge"
+    );
+  } finally {
+    createCustomer.restore();
+  }
+
+  const graphAcceptDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "risk-graph-accept-order",
+        publishMode: "public",
+        status: "waiting_response",
+        acceptedCleanerOpenid: "",
+        cleanerId: "",
+        responses: [],
+      }),
+    ],
+    orderRiskProfile: [
+      { _id: "risk-graph-accept-order", orderId: "risk-graph-accept-order", riskScore: 10, riskLevel: "low", decision: "ALLOW" },
+    ],
+  });
+  const graphAcceptCleaner = await loadFunction({ openid: "cleaner-a", db: graphAcceptDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(graphAcceptCleaner.main, { action: "acceptOrder", data: { orderId: "risk-graph-accept-order" } });
+    assert.strictEqual(result.success, true);
+    assert(
+      graphAcceptDb.data.behaviorGraphEdges.some((edge) => edge.orderId === "risk-graph-accept-order" && edge.edgeType === "order_response"),
+      "acceptOrder should persist an order_response behavior graph edge"
+    );
+  } finally {
+    graphAcceptCleaner.restore();
+  }
+
+  const rankingDb = createPrivacyDB({
+    cleanerTrustProfile: [
+      { _id: "trust-cleaner-a", cleanerId: "cleaner-a", trustScore: 45, trustLevel: "low", rankingDown: true },
+      { _id: "trust-cleaner-b", cleanerId: "cleaner-b", trustScore: 90, trustLevel: "high" },
+    ],
+  });
+  const rankingCustomer = await loadFunction({ openid: "customer-a", db: rankingDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(rankingCustomer.main, { action: "listCleaners", data: {} });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.data[0].cleanerId, "cleaner-b", "low trust cleaner should be ranked down");
+    assert(!("trustScore" in result.data[0]), "public listCleaners should not expose trustScore");
+  } finally {
+    rankingCustomer.restore();
+  }
+
+  const adminDb = createPrivacyDB({
+    adminUsers: [{ _id: "admin-a", openid: "admin-a", role: "admin", enabled: true }],
+  });
+  const admin = await loadFunction({ openid: "admin-a", db: adminDb, env: { APP_ENV: "production" } });
+  try {
+    const blockResult = await invoke(admin.main, { action: "blockCleaner", data: { cleanerId: "cleaner-a", reason: "trust score below launch threshold" } });
+    assert.strictEqual(blockResult.success, true);
+    const profile = adminDb.data.cleanerTrustProfile.find((item) => item.cleanerId === "cleaner-a");
+    assert(profile, "blockCleaner should write cleanerTrustProfile");
+    assert.strictEqual(profile.trustLevel, "blocked");
+    const cleaner = adminDb.data.cleaners.find((item) => item._openid === "cleaner-a");
+    assert.strictEqual(cleaner.available, false, "blocked cleaner should be unavailable");
+    const adjustResult = await invoke(admin.main, { action: "adjustTrustScore", data: { cleanerId: "cleaner-b", score: 45, reason: "manual review" } });
+    assert.strictEqual(adjustResult.success, true);
+    const adjusted = adminDb.data.cleanerTrustProfile.find((item) => item.cleanerId === "cleaner-b");
+    assert.strictEqual(adjusted.trustLevel, "low");
+    assert.strictEqual(adjusted.rankingDown, true);
+  } finally {
+    admin.restore();
+  }
+}
+
 function listRegisteredPages() {
   const appJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../../miniprogram/app.json"), "utf8"));
   return appJson.pages || [];
@@ -2411,6 +2598,12 @@ function runStaticMiniprogramTests() {
   const frontendPricingText = fs.readFileSync(path.join(root, "miniprogram/config/pricing.js"), "utf8");
   const cloudIndexText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/index.js"), "utf8");
   const cloudPricingText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/pricing.js"), "utf8");
+  const trustRiskText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/trust-risk.js"), "utf8");
+  const riskNormalizerText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/risk/riskNormalizer.js"), "utf8");
+  const behaviorGraphStoreText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/behavior/behaviorGraphStore.js"), "utf8");
+  const decisionCalibratorText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/decision/decisionCalibrator.js"), "utf8");
+  const v024QaText = fs.readFileSync(path.join(root, "docs/qa/v0.2.4-wechat-manual-test-checklist.md"), "utf8");
+  assert(fs.existsSync(path.join(root, "docs/qa/v0.2.4-wechat-manual-test-checklist.md")), "v0.2.4 manual QA checklist should exist");
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
   assert(orderCreateText.includes("createPricingQuote"), "order-create should request server pricing quotes");
   assert(orderCreateText.includes("quoteId"), "order-create should submit quoteId");
@@ -2427,6 +2620,21 @@ function runStaticMiniprogramTests() {
     assert(new RegExp(`${field}:\\s*null`).test(sanitizePricingInputBlock), `sanitizePricingInput should null ${field}`);
   });
   assert(!/createPricingQuoteRecord\(\s*{\s*\.\.\.data/.test(cloudIndexText), "createOrder fallback should not pass raw data into createPricingQuoteRecord");
+  ["blockCleaner", "unblockCleaner", "adjustTrustScore", "flagOrder"].forEach((action) => {
+    assert(cloudIndexText.includes(action), `${action} should be registered for minimal admin trust-risk control`);
+  });
+  assert(cloudIndexText.includes("assertRiskAllowsCleanerAction"), "acceptOrder should enforce trust-risk decisions");
+  assert(cloudIndexText.includes("shouldHideOpenOrderByRisk"), "listOpenOrders should filter high-risk orders");
+  ["calculateCleanerTrust", "applyTrustDecay", "calculateBehaviorGraph", "calculateFraudRisk", "calculateCollusionRisk", "calculateGlobalRisk"].forEach((fn) => {
+    assert(trustRiskText.includes(`function ${fn}`), `${fn} should be implemented in trust-risk engine`);
+  });
+  assert(riskNormalizerText.includes("function normalizeRiskScores"), "riskNormalizer should expose normalizeRiskScores");
+  assert(behaviorGraphStoreText.includes("createBehaviorGraphStore"), "behaviorGraphStore should expose persistent store");
+  assert(behaviorGraphStoreText.includes("detectLongTermPatterns"), "behaviorGraphStore should detect long-term patterns");
+  assert(decisionCalibratorText.includes("function calibrateDecision"), "decisionCalibrator should expose calibrateDecision");
+  assert(trustRiskText.includes("calibrateDecision"), "trust-risk engine should use calibrated decisions");
+  assert(cloudIndexText.includes("behaviorGraphEdges"), "cloud function should persist behavior graph edges");
+  assert(v024QaText.includes("r5 稳定层检查"), "v0.2.4 QA checklist should include r5 stabilization checks");
   assert(orderDetailText.includes("cleanerOpenidOf"), "order-detail should use cleanerOpenidOf");
   assert(orderDetailText.includes("openClaimCreate"), "order-detail should include claim create entry");
   assert(orderDetailText.includes("openExceptionReport"), "order-detail should include cleaner exception entry");
@@ -2508,6 +2716,7 @@ runProductionGateTests()
   .then(runAuditLogTests)
   .then(runSupportTicketTests)
   .then(runProtectionWorkflowTests)
+  .then(runTrustRiskWorkflowTests)
   .then(runStaticMiniprogramTests)
   .then(() => {
     console.log("action tests passed");
