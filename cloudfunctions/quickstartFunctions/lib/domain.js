@@ -108,7 +108,7 @@ function normalizePaymentStatus(order) {
   if (!order) return "unpaid";
   if (order.paymentStatus) return order.paymentStatus;
   const status = normalizeOrderStatus(order.status);
-  if (status === "completed" || status === "auto_completed") return "settled";
+  if (status === "completed" || status === "auto_completed") return order.settlementStatus === "settled" ? "settled" : "escrowed";
   if (status === "cancelled") return order.paidAt ? "refunded" : "unpaid";
   if (status === "waiting_payment") return "pending_pay";
   if (["confirmed", "in_service", "waiting_complete"].includes(status)) return "escrowed";
@@ -126,7 +126,12 @@ function canHideOrderForRole(order, role) {
 
 function isSettledIncomeOrder(order) {
   const status = normalizeOrderStatus(order && order.status);
-  return ["completed", "auto_completed"].includes(status) && normalizePaymentStatus(order) === "settled";
+  return (
+    ["completed", "auto_completed"].includes(status) &&
+    order &&
+    order.settlementStatus === "settled" &&
+    normalizePaymentStatus(order) === "settled"
+  );
 }
 
 function autoAcceptanceHoursForOrder(order) {
