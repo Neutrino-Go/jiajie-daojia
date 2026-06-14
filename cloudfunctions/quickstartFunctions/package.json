@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node test/domain.test.js && node test/actions.test.js && node test/platform-ops.test.js"
+    "test": "node test/domain.test.js && node test/actions.test.js && node test/platform-ops.test.js && node test/ops-intelligence.test.js"
   },
   "author": "",
   "license": "ISC",
