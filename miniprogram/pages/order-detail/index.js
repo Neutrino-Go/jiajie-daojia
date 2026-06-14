@@ -80,6 +80,7 @@ Page({
     canReassign: false,
     canAfterSale: false,
     canReportException: false,
+    paymentProvider: null,
     starItems: starItems(0),
     ratingHint: "请选择评分",
     ratingValueText: "",
@@ -138,6 +139,11 @@ Page({
         Boolean(order.myResponse) || (order.responses || []).some((response) => response.cleanerId === data.viewerOpenid);
       const canContactStatus = ["confirmed", "accepted", "in_service", "waiting_complete", "waiting_acceptance", "completed", "auto_completed"].includes(order.status);
       const canCleanerAfterSale = isAcceptedCleaner && ["confirmed", "accepted", "in_service", "waiting_complete", "waiting_acceptance", "completed", "auto_completed"].includes(order.status);
+      const paymentProvider = data.paymentProvider || {};
+      const canUseWechatPay =
+        paymentProvider.provider === "wechat_pay" &&
+        paymentProvider.enabled === true &&
+        paymentProvider.productionReady === true;
       const person = isCustomerView
         ? {
             name: cleaner?.displayName || "家洁师",
@@ -200,6 +206,7 @@ Page({
         person,
         contactInfo,
         review,
+        paymentProvider,
         viewerOpenid: data.viewerOpenid,
         isCustomerView,
         hasContact: contactInfo.visible,
@@ -219,7 +226,7 @@ Page({
           isCustomerView &&
           ["waiting_response", "waiting_confirm", "assigned_waiting_accept", "assigned_declined", "waiting_payment", "confirmed", "pending"].includes(order.status) &&
           isCustomer,
-        canPay: false,
+        canPay: isCustomerView && isCustomer && order.status === "waiting_payment" && order.paymentStatus === "pending_pay" && canUseWechatPay,
         canStart: isCleanerView && (order.status === "confirmed" || order.status === "accepted") && order.paymentStatus === "escrowed" && isAcceptedCleaner,
         canComplete: isCleanerView && order.status === "in_service" && isAcceptedCleaner,
         canConfirmComplete: isCustomerView && ["waiting_complete", "waiting_acceptance"].includes(order.status) && isCustomer,
@@ -286,7 +293,33 @@ Page({
   },
 
   async payOrder() {
-    wx.showToast({ title: "支付能力待接入", icon: "none" });
+    if (!this.data.order || !this.data.canPay) {
+      wx.showToast({ title: "支付能力待接入", icon: "none" });
+      return;
+    }
+    try {
+      const result = await callCloud("createPaymentIntent", {
+        orderId: this.data.id,
+        idempotencyKey: `order-${this.data.id}`,
+      });
+      const payParams = result.paymentIntent && result.paymentIntent.payParams;
+      if (!payParams || !wx.requestPayment) {
+        wx.showToast({ title: "支付能力待接入", icon: "none" });
+        return;
+      }
+      wx.requestPayment({
+        ...payParams,
+        success: () => {
+          wx.showToast({ title: "支付处理中", icon: "none" });
+          this.load();
+        },
+        fail: () => {
+          wx.showToast({ title: "支付未完成", icon: "none" });
+        },
+      });
+    } catch (error) {
+      showError(error, "支付能力待接入");
+    }
   },
 
   openSupport() {

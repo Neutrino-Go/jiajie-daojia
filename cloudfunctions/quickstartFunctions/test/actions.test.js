@@ -196,6 +196,15 @@ async function loadFunction({ openid = "user-a", db = new MemoryDB(), env = {} }
     NODE_ENV: undefined,
     WX_APP_ENV: undefined,
     ADMIN_OPENIDS: undefined,
+    PAYMENT_PROVIDER: undefined,
+    WECHAT_PAY_APPID: undefined,
+    WECHAT_PAY_MCH_ID: undefined,
+    WECHAT_PAY_SERIAL_NO: undefined,
+    WECHAT_PAY_PRIVATE_KEY: undefined,
+    WECHAT_PAY_API_V3_KEY: undefined,
+    WECHAT_PAY_NOTIFY_URL: undefined,
+    WECHAT_PAY_REFUND_NOTIFY_URL: undefined,
+    WECHAT_PAY_TEST_PREPAY_ID: undefined,
     ...env,
   });
   const cloud = {
@@ -2559,7 +2568,7 @@ async function runPlatformOpsWorkflowTests() {
     platformFee: 29,
   });
   const paymentDb = createPrivacyDB({ orders: [paymentOrder] });
-  const customer = await loadFunction({ openid: "customer-a", db: paymentDb, env: { APP_ENV: "production" } });
+  const customer = await loadFunction({ openid: "customer-a", db: paymentDb, env: { APP_ENV: "development", PAYMENT_PROVIDER: "manual_stub" } });
   let firstIntentId = "";
   try {
     const firstIntent = await invoke(customer.main, {
@@ -2585,7 +2594,7 @@ async function runPlatformOpsWorkflowTests() {
     customer.restore();
   }
 
-  const paymentAdmin = await loadFunction({ openid: "admin-a", db: paymentDb, env: { APP_ENV: "production" } });
+  const paymentAdmin = await loadFunction({ openid: "admin-a", db: paymentDb, env: { APP_ENV: "development", PAYMENT_PROVIDER: "manual_stub" } });
   try {
     const paid = await invoke(paymentAdmin.main, {
       action: "handlePaymentCallback",
@@ -3048,6 +3057,168 @@ async function runPlatformOpsBoundaryTests() {
   }
 }
 
+async function runLaunchReadinessTests() {
+  const productionPaymentDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "launch-pay-order",
+        customerOpenid: "customer-a",
+        status: "waiting_payment",
+        paymentStatus: "pending_pay",
+        orderAmount: 79,
+        customerPayAmount: 79,
+      }),
+    ],
+  });
+  const productionCustomer = await loadFunction({ openid: "customer-a", db: productionPaymentDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(productionCustomer.main, {
+      action: "createPaymentIntent",
+      data: { orderId: "launch-pay-order", idempotencyKey: "prod-no-config" },
+    });
+    expectFailed(result, "PROVIDER_DISABLED", null, "production createPaymentIntent without WeChat Pay config");
+    assert(/微信支付配置缺失|微信支付下单客户端未配置/.test(result.message), "production payment should fail closed with provider configuration message");
+    assert.strictEqual((productionPaymentDb.data.paymentIntents || []).length, 0, "failed provider should not create payment intent");
+  } finally {
+    productionCustomer.restore();
+  }
+
+  const refundDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "launch-refund-order",
+        customerOpenid: "customer-a",
+        status: "confirmed",
+        paymentStatus: "escrowed",
+        escrowStatus: "held",
+        customerPayAmount: 129,
+        orderAmount: 129,
+      }),
+    ],
+    refundRequests: [
+      {
+        _id: "refund-launch",
+        refundRequestId: "refund-launch",
+        orderId: "launch-refund-order",
+        amount: 79,
+        status: "submitted",
+      },
+    ],
+  });
+  const refundCustomer = await loadFunction({ openid: "customer-a", db: refundDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(refundCustomer.main, { action: "submitWechatRefund", data: { refundRequestId: "refund-launch" } }),
+      "FORBIDDEN",
+      "无管理员权限",
+      "customer submitWechatRefund"
+    );
+    expectFailed(
+      await invoke(refundCustomer.main, {
+        action: "createRefundRequest",
+        data: { orderId: "launch-refund-order", amount: 999, reason: "too much" },
+      }),
+      "INVALID_INPUT",
+      "退款金额不能超过订单实付金额",
+      "refund amount limit"
+    );
+  } finally {
+    refundCustomer.restore();
+  }
+
+  const settlementDb = createPrivacyDB({
+    orders: [
+      seedOrder({
+        _id: "launch-settle-order",
+        status: "completed",
+        paymentStatus: "escrowed",
+        escrowStatus: "held",
+        settlementStatus: "pending",
+        acceptedCleanerOpenid: "cleaner-a",
+        cleanerIncome: 100,
+        platformFee: 29,
+      }),
+    ],
+  });
+  const settlementAdmin = await loadFunction({ openid: "admin-a", db: settlementDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(settlementAdmin.main, { action: "settleOrder", data: { orderId: "launch-settle-order" } });
+    assert.strictEqual(result.success, true, "settleOrder should succeed");
+    assert.strictEqual(settlementDb.data.payoutRecords.length, 1, "settleOrder should create payoutRecords");
+    assert.strictEqual(settlementDb.data.payoutRecords[0].status, "pending_manual_payout", "payout should remain manual pending");
+  } finally {
+    settlementAdmin.restore();
+  }
+
+  const launchCleanerDb = createPrivacyDB({
+    cleaners: [
+      seedCleaner("cleaner-a", { launchEligible: false, canReceiveOrders: false }),
+      seedCleaner("cleaner-b", { displayName: "李家洁师" }),
+    ],
+    orders: [
+      seedOrder({
+        _id: "launch-open-order",
+        publishMode: "public",
+        status: "waiting_response",
+        paymentStatus: "unpaid",
+        acceptedCleanerOpenid: "",
+        cleanerId: "",
+        responses: [],
+      }),
+    ],
+  });
+  const blockedCleaner = await loadFunction({ openid: "cleaner-a", db: launchCleanerDb, env: { APP_ENV: "production" } });
+  try {
+    expectFailed(
+      await invoke(blockedCleaner.main, { action: "acceptOrder", data: { orderId: "launch-open-order" } }),
+      "FORBIDDEN",
+      "家洁师上线准入未通过",
+      "launch ineligible cleaner acceptOrder"
+    );
+  } finally {
+    blockedCleaner.restore();
+  }
+  const customerList = await loadFunction({ openid: "customer-a", db: launchCleanerDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(customerList.main, { action: "listCleaners", data: {} });
+    assert.strictEqual(result.success, true, "listCleaners should succeed");
+    assert(!result.data.some((cleaner) => cleaner.cleanerId === "cleaner-a"), "listCleaners should hide launch ineligible cleaner");
+    const badges = await invoke(customerList.main, { action: "getCleanerTrustBadges", data: { cleanerId: "cleaner-b" } });
+    assert.strictEqual(badges.success, true, "getCleanerTrustBadges should succeed");
+    assertNoSensitiveKeys(badges.data.badges, ["idCardFileID", "healthCertificateFileID", "insurancePolicyFileID", "insurancePolicyNo", "policyNo"], "public cleaner trust badges");
+  } finally {
+    customerList.restore();
+  }
+
+  const verificationDb = createPrivacyDB();
+  const verificationCleaner = await loadFunction({ openid: "cleaner-a", db: verificationDb, env: { APP_ENV: "production" } });
+  try {
+    const submit = await invoke(verificationCleaner.main, {
+      action: "submitCleanerVerification",
+      data: { idCardFileID: "cloud://id-card-private", note: "ready" },
+    });
+    assert.strictEqual(submit.success, true, "submitCleanerVerification should succeed");
+    assert.strictEqual(verificationDb.data.cleaners.find((item) => item._openid === "cleaner-a").launchEligible, false);
+  } finally {
+    verificationCleaner.restore();
+  }
+  const verificationAdmin = await loadFunction({ openid: "admin-a", db: verificationDb, env: { APP_ENV: "production" } });
+  try {
+    const review = await invoke(verificationAdmin.main, {
+      action: "adminReviewCleanerVerification",
+      data: { cleanerId: "cleaner-a", status: "approved" },
+    });
+    assert.strictEqual(review.success, true, "adminReviewCleanerVerification should approve");
+    const cleaner = verificationDb.data.cleaners.find((item) => item._openid === "cleaner-a");
+    assert.strictEqual(cleaner.launchEligible, true, "approved cleaner should be launch eligible");
+    const dashboard = await invoke(verificationAdmin.main, { action: "adminListDashboardSummary", data: {} });
+    assert.strictEqual(dashboard.success, true, "admin dashboard should be admin-only accessible");
+    assert(dashboard.data.summary.paymentProvider, "admin dashboard should include payment provider status");
+  } finally {
+    verificationAdmin.restore();
+  }
+}
+
 function listRegisteredPages() {
   const appJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../../miniprogram/app.json"), "utf8"));
   return appJson.pages || [];
@@ -3075,6 +3246,12 @@ function runStaticMiniprogramTests() {
     "pages/claim-create/index",
     "pages/claim-detail/index",
     "pages/claim-list/index",
+    "pages/cleaner-verification/index",
+    "pages/admin/index",
+    "pages/admin/orders/index",
+    "pages/admin/refunds/index",
+    "pages/admin/cleaners/index",
+    "pages/admin/settlements/index",
   ];
   requiredPages.forEach((page) => assert(pages.includes(page), `${page} should be registered`));
 
@@ -3107,6 +3284,8 @@ function runStaticMiniprogramTests() {
   const v024QaText = fs.readFileSync(path.join(root, "docs/qa/v0.2.4-wechat-manual-test-checklist.md"), "utf8");
   const v025QaPath = path.join(root, "docs/qa/v0.2.5-wechat-manual-test-checklist.md");
   const v025QaText = fs.existsSync(v025QaPath) ? fs.readFileSync(v025QaPath, "utf8") : "";
+  const v029QaPath = path.join(root, "docs/qa/v0.2.9-launch-manual-test-master-checklist.md");
+  const devtoolsQaPath = path.join(root, "docs/qa/WECHAT_DEVTOOLS_MANUAL_COMPILE_AND_TEST.md");
   assert(fs.existsSync(path.join(root, "docs/qa/v0.2.4-wechat-manual-test-checklist.md")), "v0.2.4 manual QA checklist should exist");
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
   assert(orderCreateText.includes("createPricingQuote"), "order-create should request server pricing quotes");
@@ -3143,6 +3322,9 @@ function runStaticMiniprogramTests() {
     "cloudfunctions/quickstartFunctions/lib/payment/paymentIntent.js",
     "cloudfunctions/quickstartFunctions/lib/payment/paymentCallback.js",
     "cloudfunctions/quickstartFunctions/lib/payment/paymentStatus.js",
+    "cloudfunctions/quickstartFunctions/lib/payment/providers/paymentProvider.js",
+    "cloudfunctions/quickstartFunctions/lib/payment/providers/wechatPayProvider.js",
+    "cloudfunctions/quickstartFunctions/lib/payment/providers/manualStubProvider.js",
     "cloudfunctions/quickstartFunctions/lib/settlement/settlementEngine.js",
     "cloudfunctions/quickstartFunctions/lib/settlement/cleanerPayout.js",
     "cloudfunctions/quickstartFunctions/lib/sla/slaEngine.js",
@@ -3166,6 +3348,34 @@ function runStaticMiniprogramTests() {
     "reconcilePayouts",
   ].forEach((action) => {
     assert(cloudIndexText.includes(action), `${action} should be registered for v0.2.5 platform ops`);
+  });
+  [
+    "createRefundRequest",
+    "submitWechatRefund",
+    "handleWechatRefundNotification",
+    "adminListDashboardSummary",
+    "submitCleanerVerification",
+    "adminReviewCleanerVerification",
+    "getCleanerTrustBadges",
+  ].forEach((action) => {
+    assert(cloudIndexText.includes(action), `${action} should be registered for v0.2.9 launch readiness`);
+  });
+  [
+    "docs/launch/09_CLOUDBASE_PRODUCTION_SECURITY_CHECKLIST.md",
+    "cloudbase/security-rules/database.rules.json",
+    "cloudbase/security-rules/storage.rules.json",
+  ].forEach((file) => {
+    assert(fs.existsSync(path.join(root, file)), `${file} should exist for production CloudBase security review`);
+  });
+  assert(fs.existsSync(v029QaPath), "v0.2.9 launch master QA checklist should exist");
+  assert(fs.existsSync(devtoolsQaPath), "WeChat DevTools compile checklist should exist");
+  const v029QaText = fs.readFileSync(v029QaPath, "utf8");
+  const devtoolsQaText = fs.readFileSync(devtoolsQaPath, "utf8");
+  ["微信支付", "退款", "结算", "数据库权限", "微信开发者工具", "家洁师准入", "运营控制台"].forEach((phrase) => {
+    assert(v029QaText.includes(phrase), `v0.2.9 QA checklist should mention ${phrase}`);
+  });
+  ["上传云函数", "编译", "真机预览", "AppID", "基础库"].forEach((phrase) => {
+    assert(devtoolsQaText.includes(phrase), `DevTools checklist should mention ${phrase}`);
   });
   const createPaymentIntentBlock = (cloudIndexText.match(/async function createPaymentIntent[\s\S]*?async function handlePaymentCallback/) || [""])[0];
   const handlePaymentCallbackBlock = (cloudIndexText.match(/async function handlePaymentCallback[\s\S]*?async function getPaymentStatus/) || [""])[0];
@@ -3274,6 +3484,7 @@ runProductionGateTests()
   .then(runTrustRiskWorkflowTests)
   .then(runPlatformOpsWorkflowTests)
   .then(runPlatformOpsBoundaryTests)
+  .then(runLaunchReadinessTests)
   .then(runStaticMiniprogramTests)
   .then(() => {
     console.log("action tests passed");

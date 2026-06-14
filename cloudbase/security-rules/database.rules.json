@@ -1,0 +1,58 @@
+{
+  "version": "v0.2.9-draft",
+  "notice": "上线前必须在 CloudBase 控制台复核并按真实环境调整。本文件是最小生产规则草案，不包含密钥。",
+  "collections": {
+    "orders": {
+      "read": "auth.openid == resource.data.customerOpenid || auth.openid == resource.data.acceptedCleanerOpenid || auth.openid == resource.data.assignedCleanerOpenid || isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
+    "customerProfiles": {
+      "read": "auth.openid == resource.data._openid || isAdmin(auth.openid)",
+      "write": "auth.openid == resource.data._openid || isAdmin(auth.openid)"
+    },
+    "cleaners": {
+      "read": "publicSanitizedByCloudFunction",
+      "write": "auth.openid == resource.data._openid || isAdmin(auth.openid)"
+    },
+    "pricingQuotes": {
+      "read": "auth.openid == resource.data.userOpenid || isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
+    "paymentIntents": {
+      "read": "auth.openid == resource.data.userOpenid || isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
+    "paymentCallbacks": {
+      "read": "isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
+    "refundRequests": {
+      "read": "auth.openid == resource.data.requesterOpenid || isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
+    "settlements": {
+      "read": "isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
+    "payoutRecords": {
+      "read": "isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
+    "protectionClaims": {
+      "read": "cloudFunctionOnly",
+      "write": "cloudFunctionOnly"
+    },
+    "cleanerVerifications": {
+      "read": "auth.openid == resource.data.cleanerId || isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
+    "insurancePolicies": {
+      "read": "isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
+    "auditLogs": {
+      "read": "isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    }
+  }
+}

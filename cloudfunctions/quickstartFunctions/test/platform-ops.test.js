@@ -8,6 +8,8 @@ const cleanerPayout = require("../lib/settlement/cleanerPayout");
 const slaEngine = require("../lib/sla/slaEngine");
 const orderReconcile = require("../lib/reconciliation/orderReconcile");
 const payoutReconcile = require("../lib/reconciliation/payoutReconcile");
+const paymentProvider = require("../lib/payment/providers/paymentProvider");
+const wechatPayProvider = require("../lib/payment/providers/wechatPayProvider");
 
 const order = {
   _id: "order-paid",
@@ -78,5 +80,44 @@ const payoutMismatches = payoutReconcile.reconcilePayouts({
   settlements: [{ orderId: "order-a", cleanerIncome: 100, penalty: 10, bonus: 0, payoutAmount: 100 }],
 });
 assert(payoutMismatches.mismatches.some((item) => item.type === "payout_amount_mismatch"));
+
+assert.throws(
+  () => paymentProvider.selectPaymentProvider({ env: { APP_ENV: "production", PAYMENT_PROVIDER: "manual_stub" } }),
+  /正式环境不支持 manual_stub/,
+  "manual_stub should be blocked in production"
+);
+assert.strictEqual(
+  paymentProvider.selectPaymentProvider({ env: { APP_ENV: "development", PAYMENT_PROVIDER: "manual_stub" } }).name,
+  "manual_stub",
+  "manual_stub should be available only in explicit non-production"
+);
+const missingWechatConfig = wechatPayProvider.readWechatPayConfig({ APP_ENV: "production", PAYMENT_PROVIDER: "wechat_pay" });
+assert(missingWechatConfig.missing.includes("WECHAT_PAY_MCH_ID"), "WeChat Pay config should report missing merchant id");
+
+const { privateKey } = require("crypto").generateKeyPairSync("rsa", { modulusLength: 2048 });
+const privatePem = privateKey.export({ type: "pkcs8", format: "pem" });
+const fakeWechatEnv = {
+  WECHAT_PAY_APPID: "wx-test-appid",
+  WECHAT_PAY_MCH_ID: "mch-test",
+  WECHAT_PAY_SERIAL_NO: "serial-test",
+  WECHAT_PAY_PRIVATE_KEY: privatePem,
+  WECHAT_PAY_API_V3_KEY: "0123456789abcdef0123456789abcdef",
+  WECHAT_PAY_NOTIFY_URL: "https://example.com/pay/callback",
+  WECHAT_PAY_TEST_PREPAY_ID: "wx-prepay-test",
+};
+const wechatIntent = wechatPayProvider.createWechatPaymentIntent(order, {
+  idempotencyKey: "wechat-key",
+  createdAt: "2026-06-14T00:00:00.000Z",
+  env: fakeWechatEnv,
+});
+assert.strictEqual(wechatIntent.paymentProvider, "wechat_pay");
+assert.strictEqual(wechatIntent.amountFen, 12900);
+assert(wechatIntent.payParams.package.startsWith("prepay_id="), "WeChat pay params should include prepay package");
+assert(wechatIntent.payParams.paySign, "WeChat pay params should include signed paySign");
+assert.strictEqual(
+  wechatPayProvider.verifyWechatPaySignature({}, "{}", wechatPayProvider.readWechatPayConfig(fakeWechatEnv)),
+  false,
+  "WeChat callback signature should fail closed when headers are missing"
+);
 
 console.log("platform ops tests passed");

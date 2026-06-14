@@ -1,0 +1,6 @@
+<view class="page">
+  <view class="title">退款请求</view>
+  <view class="hint">真实微信退款需管理员确认并由 provider 配置支持；当前不执行资金操作。</view>
+  <view wx:if="{{summary}}" class="item">待处理退款请求：{{summary.pendingRefundCount}}</view>
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+</view>

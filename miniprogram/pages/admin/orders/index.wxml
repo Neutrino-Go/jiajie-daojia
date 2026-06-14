@@ -1,0 +1,9 @@
+<view class="page">
+  <view class="title">订单管理</view>
+  <view class="hint">只用于上线前人工复核，不在此执行自动资金操作。</view>
+  <view wx:for="{{orders}}" wx:key="_id" class="item">
+    <view>{{item.displayOrderNo || item.orderNo || item._id}}</view>
+    <text>{{item.status}} / {{item.paymentStatus}} / {{item.settlementStatus}}</text>
+  </view>
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+</view>
