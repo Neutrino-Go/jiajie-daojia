@@ -43,6 +43,15 @@ const {
 const { createBehaviorGraphStore } = require("./lib/behavior/behaviorGraphStore");
 const { createPaymentIntentSnapshot } = require("./lib/payment/paymentIntent");
 const { applyPaymentCallback } = require("./lib/payment/paymentCallback");
+const {
+  getPaymentProviderStatus,
+  selectPaymentProvider,
+} = require("./lib/payment/providers/paymentProvider");
+const {
+  normalizeWechatPayCallback,
+  verifyWechatPaySignature,
+  readWechatPayConfig,
+} = require("./lib/payment/providers/wechatPayProvider");
 const { createSettlementSnapshot } = require("./lib/settlement/settlementEngine");
 const { calculateSlaPenalty } = require("./lib/sla/slaEngine");
 const { normalizeOrderAdminFilter } = require("./lib/admin/orderAdmin");
@@ -82,9 +91,13 @@ const COLLECTIONS = [
   "behaviorGraphEdges",
   "paymentIntents",
   "paymentCallbacks",
+  "refundRequests",
   "settlements",
+  "payoutRecords",
   "payoutAdjustments",
   "reconciliationReports",
+  "cleanerVerifications",
+  "insurancePolicies",
 ];
 
 const COMMISSION_RATE = 0.05;
@@ -1367,6 +1380,7 @@ function publicCleanerProfile(cleaner, viewerContext = {}) {
   const cleanerId = cleaner._openid || cleaner.cleanerId || "";
   const avatarUrl = cleanerAvatarUrlOf(cleaner);
   const distanceKm = cleaner.distanceKm === undefined || cleaner.distanceKm === null ? "" : cleaner.distanceKm;
+  const trustBadges = publicCleanerTrustBadges(cleaner);
   const profile = {
     cleanerId,
     displayName: cleaner.displayName || "家洁师",
@@ -1382,8 +1396,14 @@ function publicCleanerProfile(cleaner, viewerContext = {}) {
     available: Boolean(cleaner.available),
     manualApproved: Boolean(cleaner.manualApproved),
     phoneVerified: Boolean(cleaner.phoneVerified),
-    verificationBadges: Array.isArray(cleaner.verificationBadges) ? cleaner.verificationBadges.slice(0, 10) : [],
-    insuranceStatusText: cleaner.insuranceStatusText || "",
+    verificationBadges: trustBadges.verificationBadges,
+    identityVerified: trustBadges.identityVerified,
+    healthCertificateVerified: trustBadges.healthCertificateVerified,
+    trainingVerified: trustBadges.trainingVerified,
+    serviceCertificateVerified: trustBadges.serviceCertificateVerified,
+    launchEligible: trustBadges.launchEligible,
+    canReceiveOrders: trustBadges.canReceiveOrders,
+    insuranceStatusText: trustBadges.insuranceStatusText,
     distanceKm,
     distanceText: cleaner.distanceText || (distanceKm === "" ? "" : formatDistanceText(distanceKm)),
   };
@@ -1392,6 +1412,69 @@ function publicCleanerProfile(cleaner, viewerContext = {}) {
     profile.wechatContact = cleaner.wechatContact || cleaner.contactWechat || "";
   }
   return profile;
+}
+
+function statusApproved(value) {
+  return ["approved", "valid", "verified", true].includes(value);
+}
+
+function publicCleanerTrustBadges(cleaner = {}) {
+  const identityVerified = statusApproved(cleaner.identityVerificationStatus || cleaner.identityVerified);
+  const healthCertificateVerified = statusApproved(cleaner.healthCertificateStatus || cleaner.healthCertificateVerified);
+  const trainingVerified = statusApproved(cleaner.trainingStatus || cleaner.trainingVerified);
+  const serviceCertificateVerified = statusApproved(cleaner.serviceCertificateStatus || cleaner.serviceCertificateVerified);
+  const insuranceStatus = String(cleaner.insuranceStatus || "").trim();
+  const insuranceStatusText =
+    cleaner.insuranceStatusText ||
+    (insuranceStatus === "active"
+      ? "保障范围以实际保险合同和平台规则为准。"
+      : insuranceStatus === "pending"
+        ? "保险能力待接入/以实际订单保障页为准。"
+        : "");
+  const launchEligible = cleaner.launchEligible !== false && cleaner.canReceiveOrders !== false;
+  const badges = Array.isArray(cleaner.verificationBadges) ? cleaner.verificationBadges.slice(0, 10) : [];
+  [
+    [identityVerified, "实名已核验"],
+    [healthCertificateVerified, "健康凭证已核验"],
+    [trainingVerified, "培训已完成"],
+    [serviceCertificateVerified, "服务证已核验"],
+    [insuranceStatus === "active", "保障规则已配置"],
+  ].forEach(([enabled, label]) => {
+    if (enabled && !badges.includes(label)) badges.push(label);
+  });
+  return {
+    cleanerId: cleaner._openid || cleaner.cleanerId || "",
+    manualApproved: Boolean(cleaner.manualApproved),
+    phoneVerified: Boolean(cleaner.phoneVerified),
+    identityVerified,
+    healthCertificateVerified,
+    trainingVerified,
+    serviceCertificateVerified,
+    insuranceStatusText,
+    launchEligible,
+    canReceiveOrders: launchEligible,
+    verificationBadges: badges,
+  };
+}
+
+function cleanerLaunchBlockedReason(cleaner = {}) {
+  if (!cleaner) return "请先完善家洁师资料";
+  if (cleaner.launchEligible === false || cleaner.canReceiveOrders === false) return "家洁师上线准入未通过";
+  if (cleaner.identityVerificationStatus && !statusApproved(cleaner.identityVerificationStatus)) return "实名核验未通过";
+  if (cleaner.healthCertificateStatus && !statusApproved(cleaner.healthCertificateStatus)) return "健康凭证未通过";
+  if (cleaner.trainingStatus && !statusApproved(cleaner.trainingStatus)) return "培训状态未通过";
+  if (cleaner.serviceCertificateStatus && !statusApproved(cleaner.serviceCertificateStatus)) return "服务证状态未通过";
+  if (["expired", "rejected", "blocked"].includes(String(cleaner.insuranceStatus || ""))) return "保障状态未通过";
+  return "";
+}
+
+function assertCleanerLaunchEligible(cleaner) {
+  const reason = cleanerLaunchBlockedReason(cleaner);
+  if (reason) throw AppError(reason, "FORBIDDEN");
+}
+
+function isCleanerLaunchVisible(cleaner = {}) {
+  return !cleanerLaunchBlockedReason(cleaner);
 }
 
 function publicCleaner(cleaner) {
@@ -2343,6 +2426,7 @@ async function calculateAndStoreOrderRisk(order, cleaner = null) {
 
 async function assertRiskAllowsCleanerAction(order, cleaner, cleanerId) {
   const trust = await getCleanerTrustProfile(cleanerId, cleaner);
+  assertCleanerLaunchEligible(cleaner);
   if (trust.trustLevel === "blocked" || trust.blocked === true) {
     throw AppError("家洁师信任状态暂不可接单", "FORBIDDEN");
   }
@@ -2363,6 +2447,7 @@ async function assertRiskAllowsCleanerAction(order, cleaner, cleanerId) {
 
 async function assertCleanerAssignable(order, cleanerId, cleaner) {
   const trust = await getCleanerTrustProfile(cleanerId, cleaner);
+  assertCleanerLaunchEligible(cleaner);
   if (trust.trustLevel === "blocked" || trust.blocked === true) {
     throw AppError("该家洁师暂不可预约", "FORBIDDEN");
   }
@@ -2638,6 +2723,7 @@ async function acceptOrder(data) {
   const order = await getOrder(data.orderId);
   const cleaner = await getCleaner(openid);
   assertCleanerCanAccept(order, cleaner);
+  assertCleanerLaunchEligible(cleaner);
   await assertRiskAllowsCleanerAction(order, cleaner, openid);
 
   const acceptedAt = now();
@@ -3087,6 +3173,7 @@ async function listCleaners(data) {
   }
   const enriched = [];
   for (const cleaner of cleaners) {
+    if (!isCleanerLaunchVisible(cleaner)) continue;
     const cleanerId = cleaner._openid || cleaner.cleanerId || "";
     const trust = cleanerId ? await getCleanerTrustProfile(cleanerId, cleaner).catch(() => null) : null;
     if (trust && (trust.trustLevel === "blocked" || trust.blocked === true)) continue;
@@ -3130,6 +3217,207 @@ async function getCleanerDetail(data) {
     viewerRole: viewerUser ? viewerUser.role : "",
     canEdit,
   });
+}
+
+function normalizeVerificationFileIDs(value, limit = 4) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || "").trim()).filter(Boolean).slice(0, limit);
+}
+
+function privateCleanerVerification(record = {}) {
+  return {
+    verificationId: record.verificationId || record._id || "",
+    cleanerId: record.cleanerId || "",
+    status: record.status || "pending",
+    identityVerificationStatus: record.identityVerificationStatus || "",
+    healthCertificateStatus: record.healthCertificateStatus || "",
+    trainingStatus: record.trainingStatus || "",
+    serviceCertificateStatus: record.serviceCertificateStatus || "",
+    idCardFileIDs: normalizeVerificationFileIDs(record.idCardFileIDs),
+    healthCertificateFileIDs: normalizeVerificationFileIDs(record.healthCertificateFileIDs),
+    trainingCertificateFileIDs: normalizeVerificationFileIDs(record.trainingCertificateFileIDs),
+    serviceCertificateFileIDs: normalizeVerificationFileIDs(record.serviceCertificateFileIDs),
+    rejectReason: record.rejectReason || "",
+    createdAt: record.createdAt || "",
+    updatedAt: record.updatedAt || "",
+  };
+}
+
+async function submitCleanerVerification(data = {}) {
+  const openid = getOpenid();
+  await requireUserRole(openid, "cleaner");
+  const cleaner = await ensureCleanerProfile(openid);
+  const submittedAt = now();
+  await safeCreateCollection("cleanerVerifications");
+  const existing = await findOne("cleanerVerifications", { cleanerId: openid, status: "pending" }).catch(() => null);
+  const payload = {
+    cleanerId: openid,
+    status: "pending",
+    identityVerificationStatus: "pending",
+    healthCertificateStatus: data.healthCertificateFileIDs ? "pending" : cleaner.healthCertificateStatus || "",
+    trainingStatus: data.trainingCertificateFileIDs ? "pending" : cleaner.trainingStatus || "",
+    serviceCertificateStatus: data.serviceCertificateFileIDs ? "pending" : cleaner.serviceCertificateStatus || "",
+    idCardFileIDs: normalizeVerificationFileIDs(data.idCardFileIDs || data.idCardFileID ? data.idCardFileIDs || [data.idCardFileID] : []),
+    healthCertificateFileIDs: normalizeVerificationFileIDs(data.healthCertificateFileIDs || data.healthCertificateFileID ? data.healthCertificateFileIDs || [data.healthCertificateFileID] : []),
+    trainingCertificateFileIDs: normalizeVerificationFileIDs(data.trainingCertificateFileIDs || data.trainingCertificateFileID ? data.trainingCertificateFileIDs || [data.trainingCertificateFileID] : []),
+    serviceCertificateFileIDs: normalizeVerificationFileIDs(data.serviceCertificateFileIDs || data.serviceCertificateFileID ? data.serviceCertificateFileIDs || [data.serviceCertificateFileID] : []),
+    note: String(data.note || "").slice(0, 200),
+    updatedAt: submittedAt,
+  };
+  let verificationId;
+  if (existing) {
+    verificationId = existing._id;
+    await db.collection("cleanerVerifications").doc(existing._id).update({ data: payload });
+  } else {
+    verificationId = `ver_${openid}_${Date.now()}`;
+    await db.collection("cleanerVerifications").add({
+      data: {
+        _id: verificationId,
+        verificationId,
+        ...payload,
+        createdAt: submittedAt,
+      },
+    });
+  }
+  await db.collection("cleaners").doc(cleaner._id).update({
+    data: {
+      launchEligible: false,
+      canReceiveOrders: false,
+      identityVerificationStatus: "pending",
+      verificationStatus: "pending",
+      updatedAt: submittedAt,
+    },
+  });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "cleaner",
+    action: "submitCleanerVerification",
+    targetType: "cleanerVerification",
+    targetId: verificationId,
+    after: { cleanerId: openid, status: "pending" },
+  });
+  const record = await findOne("cleanerVerifications", { _id: verificationId });
+  return ok({ verification: privateCleanerVerification(record) });
+}
+
+async function getMyCleanerVerification() {
+  const openid = getOpenid();
+  await requireUserRole(openid, "cleaner");
+  const record = await findOne("cleanerVerifications", { cleanerId: openid }).catch(() => null);
+  return ok({ verification: record ? privateCleanerVerification(record) : null, badges: publicCleanerTrustBadges(await getCleaner(openid)) });
+}
+
+async function adminListCleanerVerifications(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const status = String(data.status || "").trim();
+  const result = await db.collection("cleanerVerifications").orderBy("updatedAt", "desc").limit(Math.min(Number(data.limit || 100), 100)).get();
+  const list = status ? result.data.filter((item) => item.status === status) : result.data;
+  return ok({ verifications: list.map(privateCleanerVerification) });
+}
+
+async function adminReviewCleanerVerification(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const verification =
+    (await findOne("cleanerVerifications", { verificationId: data.verificationId }).catch(() => null)) ||
+    (await findOne("cleanerVerifications", { cleanerId: data.cleanerId }).catch(() => null));
+  if (!verification) throw AppError("家洁师准入资料不存在", "INVALID_INPUT");
+  const cleaner = await getCleaner(verification.cleanerId);
+  if (!cleaner) throw AppError("家洁师资料不存在", "INVALID_INPUT");
+  const approved = data.status === "approved" || data.approved === true;
+  const reviewedAt = now();
+  const verificationPatch = {
+    status: approved ? "approved" : "rejected",
+    identityVerificationStatus: approved ? "approved" : "rejected",
+    healthCertificateStatus: approved ? "approved" : verification.healthCertificateStatus || "rejected",
+    trainingStatus: approved ? "approved" : verification.trainingStatus || "rejected",
+    serviceCertificateStatus: approved ? "approved" : verification.serviceCertificateStatus || "rejected",
+    rejectReason: approved ? "" : String(data.reason || data.rejectReason || "").slice(0, 120),
+    reviewedBy: openid,
+    reviewedAt,
+    updatedAt: reviewedAt,
+  };
+  await db.collection("cleanerVerifications").doc(verification._id).update({ data: verificationPatch });
+  await db.collection("cleaners").doc(cleaner._id).update({
+    data: {
+      identityVerificationStatus: verificationPatch.identityVerificationStatus,
+      healthCertificateStatus: verificationPatch.healthCertificateStatus,
+      trainingStatus: verificationPatch.trainingStatus,
+      serviceCertificateStatus: verificationPatch.serviceCertificateStatus,
+      verificationStatus: verificationPatch.status,
+      launchEligible: approved,
+      canReceiveOrders: approved,
+      manualApproved: approved ? true : cleaner.manualApproved,
+      updatedAt: reviewedAt,
+    },
+  });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "adminReviewCleanerVerification",
+    targetType: "cleanerVerification",
+    targetId: verification.verificationId || verification._id,
+    before: { status: verification.status },
+    after: { status: verificationPatch.status, cleanerId: verification.cleanerId, launchEligible: approved },
+  });
+  return ok({ verification: privateCleanerVerification({ ...verification, ...verificationPatch }) });
+}
+
+async function upsertInsurancePolicy(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const cleanerId = String(data.cleanerId || "").trim();
+  if (!cleanerId) throw AppError("缺少家洁师 ID", "INVALID_INPUT");
+  const policyId = data.policyId || `policy_${cleanerId}`;
+  const updatedAt = now();
+  await safeCreateCollection("insurancePolicies");
+  const payload = {
+    _id: policyId,
+    policyId,
+    cleanerId,
+    status: String(data.status || "pending").trim(),
+    policyNo: String(data.policyNo || "").slice(0, 60),
+    policyFileID: String(data.policyFileID || "").slice(0, 200),
+    insuranceStatusText: "保障范围以实际保险合同和平台规则为准。",
+    updatedAt,
+  };
+  const existing = await findOne("insurancePolicies", { _id: policyId }).catch(() => null);
+  if (existing) await db.collection("insurancePolicies").doc(policyId).update({ data: payload });
+  else await db.collection("insurancePolicies").add({ data: { ...payload, createdAt: updatedAt } });
+  const cleaner = await getCleaner(cleanerId);
+  if (cleaner) {
+    await db.collection("cleaners").doc(cleaner._id).update({
+      data: {
+        insuranceStatus: payload.status,
+        insuranceStatusText: payload.insuranceStatusText,
+        updatedAt,
+      },
+    });
+  }
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "upsertInsurancePolicy",
+    targetType: "insurancePolicy",
+    targetId: policyId,
+    after: { cleanerId, status: payload.status },
+  });
+  return ok({ policy: { policyId, cleanerId, status: payload.status, insuranceStatusText: payload.insuranceStatusText } });
+}
+
+async function enrollCleanerInsurance(data = {}) {
+  return upsertInsurancePolicy({ ...data, status: data.status || "pending" });
+}
+
+async function updateCleanerInsuranceStatus(data = {}) {
+  return upsertInsurancePolicy(data);
+}
+
+async function getCleanerTrustBadges(data = {}) {
+  const cleaner = await getCleaner(data.cleanerId || data.cleanerOpenid || getOpenid());
+  if (!cleaner) throw AppError("家洁师资料不存在", "INVALID_INPUT");
+  return ok({ badges: publicCleanerTrustBadges(cleaner) });
 }
 
 async function updateCleanerProfile(data) {
@@ -3263,6 +3551,7 @@ async function getOrderDetail(data) {
     review: manualReview,
     canEditReview: reviewCanEdit,
     savedCleaner: Boolean(savedCleaner),
+    paymentProvider: getPaymentProviderStatus(process.env),
     viewerOpenid: openid,
   });
 }
@@ -4141,7 +4430,7 @@ async function flagOrder(data = {}) {
 }
 
 function publicPaymentIntent(intent = {}) {
-  return {
+  const publicIntent = {
     intentId: intent.intentId || intent._id || "",
     orderId: intent.orderId || "",
     amount: Number(intent.amount || 0),
@@ -4149,9 +4438,15 @@ function publicPaymentIntent(intent = {}) {
     status: intent.status || "pending",
     escrowStatus: intent.escrowStatus || "",
     paymentProvider: intent.paymentProvider || "manual_stub",
+    providerMode: intent.providerMode || "",
+    providerStatus: intent.providerStatus || "",
     createdAt: intent.createdAt || "",
     updatedAt: intent.updatedAt || "",
   };
+  if (intent.payParams && intent.status === "pending") {
+    publicIntent.payParams = intent.payParams;
+  }
+  return publicIntent;
 }
 
 async function findPaymentIntentByIntentId(intentId) {
@@ -4215,11 +4510,23 @@ async function createPaymentIntent(data = {}) {
     throw AppError("当前订单已存在已支付记录", "INVALID_STATUS");
   }
   const createdAt = now();
-  const snapshot = createPaymentIntentSnapshot(order, {
-    idempotencyKey: data.idempotencyKey || data.requestId || order._id,
-    createdAt,
-    userOpenid: order.customerOpenid,
-  });
+  let provider;
+  try {
+    provider = selectPaymentProvider({ env: process.env, isAdmin: viewerIsAdmin });
+  } catch (error) {
+    throw AppError(error.message, "PROVIDER_DISABLED");
+  }
+  let snapshot;
+  try {
+    snapshot = provider.createPaymentIntent({
+      order,
+      openid: order.customerOpenid,
+      idempotencyKey: data.idempotencyKey || data.requestId || order._id,
+      createdAt,
+    });
+  } catch (error) {
+    throw AppError(error.message, "PROVIDER_DISABLED");
+  }
   const existingByKey = await findOne("paymentIntents", { intentKey: snapshot.intentKey }).catch(() => null);
   if (existingByKey) return ok({ paymentIntent: publicPaymentIntent(existingByKey), idempotent: true });
   const existingActive = await findOne("paymentIntents", { orderId: order._id, status: "pending" }).catch(() => null);
@@ -4239,9 +4546,9 @@ async function createPaymentIntent(data = {}) {
     action: "createPaymentIntent",
     targetType: "paymentIntent",
     targetId: snapshot.intentId,
-    after: { orderId: order._id, amount: snapshot.amount, status: "pending" },
+    after: { orderId: order._id, amount: snapshot.amount, status: "pending", paymentProvider: snapshot.paymentProvider },
   });
-  return ok({ paymentIntent: publicPaymentIntent(snapshot), idempotent: false });
+  return ok({ paymentIntent: publicPaymentIntent(snapshot), provider: provider.publicStatus, idempotent: false });
 }
 
 async function handlePaymentCallback(data = {}) {
@@ -4258,9 +4565,26 @@ async function handlePaymentCallback(data = {}) {
     }
     return ok({ paymentIntent: publicPaymentIntent(intent), duplicate: true });
   }
+  let callbackData = data;
+  if (intent.paymentProvider === "wechat_pay" || data.provider === "wechat_pay") {
+    const config = readWechatPayConfig(process.env);
+    if (!verifyWechatPaySignature(data.headers || {}, data.rawBody || JSON.stringify(data.resource || data), config)) {
+      throw AppError("微信支付回调签名校验失败", "FORBIDDEN");
+    }
+    const normalizedWechatEvent = normalizeWechatPayCallback(data);
+    callbackData = {
+      ...data,
+      eventId: normalizedWechatEvent.eventId || data.eventId,
+      intentId: intent.intentId,
+      orderId: intent.orderId,
+      status: normalizedWechatEvent.status,
+      amount: normalizedWechatEvent.amount || intent.amount,
+      occurredAt: normalizedWechatEvent.occurredAt,
+    };
+  }
   let nextIntent;
   try {
-    nextIntent = applyPaymentCallback(intent, data);
+    nextIntent = applyPaymentCallback(intent, callbackData);
   } catch (error) {
     throw AppError(error.message, "INVALID_INPUT");
   }
@@ -4268,11 +4592,12 @@ async function handlePaymentCallback(data = {}) {
   await safeCreateCollection("paymentCallbacks");
   await db.collection("paymentCallbacks").add({
     data: {
-      eventId: data.eventId,
+      eventId: callbackData.eventId,
       intentId: intent.intentId,
       orderId: intent.orderId,
-      status: data.status,
-      amount: Number(data.amount || 0),
+      provider: intent.paymentProvider || "manual_stub",
+      status: callbackData.status,
+      amount: Number(callbackData.amount || 0),
       createdAt: now(),
     },
   });
@@ -4338,7 +4663,25 @@ async function settleOrder(data = {}) {
     throw AppError(error.message, "INVALID_STATUS");
   }
   await safeCreateCollection("settlements");
+  await safeCreateCollection("payoutRecords");
   await db.collection("settlements").add({ data: settlement });
+  await db.collection("payoutRecords").add({
+    data: {
+      _id: `payout_${settlement.settlementId}`,
+      payoutId: `payout_${settlement.settlementId}`,
+      settlementId: settlement.settlementId,
+      orderId: order._id,
+      cleanerOpenid: settlement.cleanerOpenid,
+      cleanerIncome: settlement.cleanerIncome,
+      penalty: settlement.penalty,
+      bonus: settlement.bonus,
+      payoutAmount: settlement.payoutAmount,
+      status: "pending_manual_payout",
+      payoutProvider: "manual_offline",
+      createdAt: settlement.createdAt,
+      updatedAt: settlement.updatedAt,
+    },
+  });
   await db.collection("orders").doc(order._id).update({
     data: {
       settlementStatus: "settled",
@@ -4358,6 +4701,129 @@ async function settleOrder(data = {}) {
     after: { orderId: order._id, payoutAmount: settlement.payoutAmount, penalty: settlement.penalty, bonus: settlement.bonus },
   });
   return ok({ settlement, idempotent: false });
+}
+
+function paidAmountOf(order = {}) {
+  return roundMoney(order.customerPayAmount || order.orderAmount || order.amount || order.estimatedPrice || 0);
+}
+
+function normalizeRefundAmount(order = {}, data = {}) {
+  const requested = data.amount !== undefined ? data.amount : data.refundAmount;
+  const amount = requested === undefined || requested === null || requested === "" ? paidAmountOf(order) : roundMoney(requested);
+  const paidAmount = paidAmountOf(order);
+  if (amount <= 0) throw AppError("退款金额必须大于 0", "INVALID_INPUT");
+  if (amount > paidAmount) throw AppError("退款金额不能超过订单实付金额", "INVALID_INPUT");
+  return amount;
+}
+
+function publicRefundRequest(refund = {}) {
+  return {
+    refundRequestId: refund.refundRequestId || refund._id || "",
+    orderId: refund.orderId || "",
+    orderNo: refund.orderNo || "",
+    amount: Number(refund.amount || 0),
+    status: refund.status || "submitted",
+    refundProvider: refund.refundProvider || "",
+    createdAt: refund.createdAt || "",
+    updatedAt: refund.updatedAt || "",
+  };
+}
+
+async function createRefundRequest(data = {}) {
+  const openid = getOpenid();
+  const order = await getOrder(data.orderId);
+  if (!order) throw AppError("订单不存在", "INVALID_INPUT");
+  const viewerIsAdmin = await isAdmin(openid);
+  if (!viewerIsAdmin && order.customerOpenid !== openid) {
+    throw AppError("无权申请该订单退款", "FORBIDDEN");
+  }
+  if (!["escrowed", "settled"].includes(normalizePaymentStatus(order))) {
+    throw AppError("未支付订单不能申请退款", "INVALID_STATUS");
+  }
+  const createdAt = now();
+  const amount = normalizeRefundAmount(order, data);
+  await safeCreateCollection("refundRequests");
+  const request = {
+    _id: data.refundRequestId || `refund_${order._id}_${Date.now()}`,
+    refundRequestId: data.refundRequestId || `refund_${order._id}_${Date.now()}`,
+    orderId: order._id,
+    orderNo: order.displayOrderNo || order.orderNo || "",
+    requesterOpenid: openid,
+    requesterRole: viewerIsAdmin ? "admin" : "customer",
+    amount,
+    reason: String(data.reason || "").slice(0, 200),
+    status: "submitted",
+    refundProvider: "wechat_pay",
+    createdAt,
+    updatedAt: createdAt,
+  };
+  await db.collection("refundRequests").add({ data: request });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: viewerIsAdmin ? "admin" : "customer",
+    action: "createRefundRequest",
+    targetType: "refundRequest",
+    targetId: request.refundRequestId,
+    after: { orderId: order._id, amount, status: "submitted" },
+  });
+  return ok({ refundRequest: publicRefundRequest(request) });
+}
+
+async function submitWechatRefund(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const refund =
+    (await findOne("refundRequests", { refundRequestId: data.refundRequestId || data.refundId }).catch(() => null)) ||
+    (await findOne("refundRequests", { _id: data.refundRequestId || data.refundId }).catch(() => null));
+  if (!refund) throw AppError("退款请求不存在", "INVALID_INPUT");
+  const order = await getOrder(refund.orderId);
+  if (!order) throw AppError("订单不存在", "INVALID_INPUT");
+  const configStatus = getPaymentProviderStatus(process.env);
+  if (configStatus.provider !== "wechat_pay" || !configStatus.productionReady) {
+    throw AppError("微信退款 provider 未配置，不能提交真实退款", "PROVIDER_DISABLED");
+  }
+  const updatedAt = now();
+  await db.collection("refundRequests").doc(refund._id).update({
+    data: {
+      status: "processing",
+      refundProvider: "wechat_pay",
+      outRefundNo: refund.outRefundNo || `RF${String(refund.refundRequestId || refund._id).replace(/[^A-Za-z0-9]/g, "").slice(-24)}`,
+      submittedAt: updatedAt,
+      updatedAt,
+    },
+  });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "submitWechatRefund",
+    targetType: "refundRequest",
+    targetId: refund.refundRequestId || refund._id,
+    before: { status: refund.status },
+    after: { status: "processing", orderId: order._id, amount: refund.amount },
+  });
+  return ok({ refundRequest: publicRefundRequest({ ...refund, status: "processing", updatedAt }) });
+}
+
+async function handleWechatRefundNotification(data = {}) {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const refund =
+    (await findOne("refundRequests", { refundRequestId: data.refundRequestId || data.refundId }).catch(() => null)) ||
+    (await findOne("refundRequests", { outRefundNo: data.outRefundNo }).catch(() => null));
+  if (!refund) throw AppError("退款请求不存在", "INVALID_INPUT");
+  const status = ["succeeded", "failed"].includes(data.status) ? data.status : data.status === "SUCCESS" ? "succeeded" : "failed";
+  const updatedAt = now();
+  await db.collection("refundRequests").doc(refund._id).update({ data: { status, callbackEventId: data.eventId || "", updatedAt } });
+  await writeAuditLog({
+    actorOpenid: openid,
+    actorRole: "admin",
+    action: "handleWechatRefundNotification",
+    targetType: "refundRequest",
+    targetId: refund.refundRequestId || refund._id,
+    before: { status: refund.status },
+    after: { status },
+  });
+  return ok({ refundRequest: publicRefundRequest({ ...refund, status, updatedAt }) });
 }
 
 async function forceRefund(data = {}) {
@@ -4417,6 +4883,38 @@ async function adminListOrders(data = {}) {
   if (filter.paymentStatus) orders = orders.filter((order) => order.paymentStatus === filter.paymentStatus);
   if (filter.settlementStatus) orders = orders.filter((order) => order.settlementStatus === filter.settlementStatus);
   return ok({ orders });
+}
+
+async function getPaymentProviderStatusAction() {
+  return ok({ paymentProvider: getPaymentProviderStatus(process.env) });
+}
+
+async function adminListDashboardSummary() {
+  const openid = getOpenid();
+  await requireAdmin(openid);
+  const [orders, claims, refunds, settlements, cleaners, verifications, payments] = await Promise.all([
+    getCollectionData("orders").catch(() => []),
+    getCollectionData("protectionClaims").catch(() => []),
+    getCollectionData("refundRequests").catch(() => []),
+    getCollectionData("settlements").catch(() => []),
+    getCollectionData("cleaners").catch(() => []),
+    getCollectionData("cleanerVerifications").catch(() => []),
+    getCollectionData("paymentIntents").catch(() => []),
+  ]);
+  return ok({
+    summary: {
+      orderCount: orders.length,
+      pendingPaymentCount: orders.filter((order) => order.status === "waiting_payment" || order.paymentStatus === "pending_pay").length,
+      activeClaimCount: claims.filter((claim) => isActiveAfterSaleStatus(claim.status)).length,
+      pendingRefundCount: refunds.filter((refund) => ["submitted", "processing"].includes(refund.status)).length,
+      pendingSettlementCount: settlements.filter((settlement) => settlement.status === "pending_payout").length,
+      cleanerCount: cleaners.length,
+      blockedCleanerCount: cleaners.filter((cleaner) => cleaner.launchEligible === false || cleaner.canReceiveOrders === false).length,
+      pendingCleanerVerificationCount: verifications.filter((verification) => verification.status === "pending").length,
+      paidPaymentIntentCount: payments.filter((payment) => payment.status === "paid").length,
+      paymentProvider: getPaymentProviderStatus(process.env),
+    },
+  });
 }
 
 async function adjustPayout(data = {}) {
@@ -4549,15 +5047,28 @@ const actions = {
   updateProtectionClaimStatus,
   submitServiceProof,
   reportCleanerException,
+  getPaymentProviderStatus: getPaymentProviderStatusAction,
   createPaymentIntent,
   handlePaymentCallback,
   getPaymentStatus,
+  createRefundRequest,
+  submitWechatRefund,
+  handleWechatRefundNotification,
   settleOrder,
   forceRefund,
+  adminListDashboardSummary,
   adminListOrders,
   adjustPayout,
   reconcileOrders,
   reconcilePayouts,
+  submitCleanerVerification,
+  getMyCleanerVerification,
+  adminListCleanerVerifications,
+  adminReviewCleanerVerification,
+  upsertInsurancePolicy,
+  enrollCleanerInsurance,
+  updateCleanerInsuranceStatus,
+  getCleanerTrustBadges,
   blockCleaner,
   unblockCleaner,
   adjustTrustScore,

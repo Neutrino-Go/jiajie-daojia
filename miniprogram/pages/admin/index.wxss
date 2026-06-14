@@ -1,0 +1,48 @@
+.page {
+  min-height: 100vh;
+  padding: 32rpx;
+  background: #f7f8fa;
+  color: #1f2a24;
+}
+.title {
+  font-size: 36rpx;
+  font-weight: 700;
+}
+.subtitle,
+.provider {
+  margin-top: 10rpx;
+  color: #6f7a74;
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16rpx;
+  margin: 28rpx 0;
+}
+.metric {
+  padding: 24rpx;
+  border-radius: 8rpx;
+  background: #fff;
+}
+.metric text {
+  display: block;
+  color: #6f7a74;
+  font-size: 24rpx;
+}
+.metric strong {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 36rpx;
+}
+.actions button {
+  margin-bottom: 16rpx;
+  background: #16a05d;
+  color: #fff;
+}
+.error {
+  margin-top: 24rpx;
+  color: #c0392b;
+  font-size: 24rpx;
+}

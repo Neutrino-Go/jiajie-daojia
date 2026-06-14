@@ -1,0 +1,25 @@
+<view class="page">
+  <view class="title">运营控制台</view>
+  <view class="subtitle">仅管理员可访问。当前页面只做查看和人工处理入口，不执行资金操作。</view>
+
+  <view wx:if="{{summary}}" class="grid">
+    <view class="metric"><text>订单</text><strong>{{summary.orderCount}}</strong></view>
+    <view class="metric"><text>待支付</text><strong>{{summary.pendingPaymentCount}}</strong></view>
+    <view class="metric"><text>售后中</text><strong>{{summary.activeClaimCount}}</strong></view>
+    <view class="metric"><text>退款请求</text><strong>{{summary.pendingRefundCount}}</strong></view>
+    <view class="metric"><text>待结算</text><strong>{{summary.pendingSettlementCount}}</strong></view>
+    <view class="metric"><text>待审核阿姨</text><strong>{{summary.pendingCleanerVerificationCount}}</strong></view>
+  </view>
+
+  <view class="actions">
+    <button bindtap="openOrders">订单管理</button>
+    <button bindtap="openRefunds">退款请求</button>
+    <button bindtap="openCleaners">家洁师准入</button>
+    <button bindtap="openSettlements">结算对账</button>
+  </view>
+
+  <view wx:if="{{summary.paymentProvider}}" class="provider">
+    支付 provider：{{summary.paymentProvider.provider}}，{{summary.paymentProvider.message}}
+  </view>
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+</view>

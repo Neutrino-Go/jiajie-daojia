@@ -120,6 +120,24 @@
       </view>
       <view class="chevron">›</view>
     </view>
+    <view wx:if="{{!isCustomer}}" class="menu-row" bindtap="openCleanerVerification" hover-class="menu-row-hover">
+      <view class="menu-left">
+        <view class="menu-icon">
+          <image class="menu-icon-img" src="/images/profile-icons/user-card.svg" mode="aspectFit"></image>
+        </view>
+        <view class="menu-text">准入资料</view>
+      </view>
+      <view class="chevron">›</view>
+    </view>
+    <view class="menu-row" bindtap="openAdminConsole" hover-class="menu-row-hover">
+      <view class="menu-left">
+        <view class="menu-icon menu-icon-gray">
+          <image class="menu-icon-img" src="/images/profile-icons/setting.svg" mode="aspectFit"></image>
+        </view>
+        <view class="menu-text">运营控制台</view>
+      </view>
+      <view class="chevron">›</view>
+    </view>
     <view class="menu-row" bindtap="settings" hover-class="menu-row-hover">
       <view class="menu-left">
         <view class="menu-icon menu-icon-gray">

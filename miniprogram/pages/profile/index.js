@@ -422,6 +422,14 @@ Page({
     wx.navigateTo({ url: "/pages/claim-list/index" });
   },
 
+  openCleanerVerification() {
+    wx.navigateTo({ url: "/pages/cleaner-verification/index" });
+  },
+
+  openAdminConsole() {
+    wx.navigateTo({ url: "/pages/admin/index" });
+  },
+
   settings() {
     const legalPages = [
       "/pages/legal/user-agreement/index",

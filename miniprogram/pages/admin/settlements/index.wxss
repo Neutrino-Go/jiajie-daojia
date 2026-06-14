@@ -1,0 +1,5 @@
+.page { min-height: 100vh; padding: 32rpx; background: #f7f8fa; color: #1f2a24; }
+.title { font-size: 34rpx; font-weight: 700; }
+.hint { margin: 8rpx 0 24rpx; color: #6f7a74; font-size: 24rpx; line-height: 1.5; }
+.item { padding: 20rpx; border-radius: 8rpx; background: #fff; }
+.error { color: #c0392b; font-size: 24rpx; }

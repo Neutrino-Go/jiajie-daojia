@@ -1,0 +1,27 @@
+<view class="page">
+  <view class="header">
+    <view class="title">家洁师准入资料</view>
+    <view class="subtitle">证件和保险状态仅用于平台审核，公开资料只展示核验状态。</view>
+  </view>
+
+  <view wx:if="{{badges}}" class="panel">
+    <view class="row"><text>上线资格</text><text>{{badges.launchEligible ? '已通过' : '待审核'}}</text></view>
+    <view class="row"><text>实名核验</text><text>{{badges.identityVerified ? '已核验' : '待核验'}}</text></view>
+    <view class="row"><text>健康凭证</text><text>{{badges.healthCertificateVerified ? '已核验' : '待核验'}}</text></view>
+    <view class="row"><text>保险说明</text><text>{{badges.insuranceStatusText || '保险能力待接入/以实际订单保障页为准。'}}</text></view>
+  </view>
+
+  <view class="panel">
+    <view class="section-title">提交说明</view>
+    <textarea value="{{note}}" bindinput="onNoteInput" maxlength="200" placeholder="补充说明，可留空" />
+    <button loading="{{submitting}}" bindtap="submit">提交准入资料</button>
+  </view>
+
+  <view wx:if="{{verification}}" class="panel">
+    <view class="section-title">当前审核状态</view>
+    <view class="row"><text>状态</text><text>{{verification.status}}</text></view>
+    <view class="row"><text>更新时间</text><text>{{verification.updatedAt}}</text></view>
+  </view>
+
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+</view>

@@ -1,0 +1,30 @@
+{
+  "version": "v0.2.9-draft",
+  "notice": "上线前必须在 CloudBase 控制台复核。证件、保单、售后图片必须隔离权限。",
+  "buckets": {
+    "public": {
+      "read": "true",
+      "write": "cloudFunctionOnly"
+    },
+    "reviews": {
+      "read": "cloudFunctionSanitizedOnly",
+      "write": "auth.openid != null"
+    },
+    "service-proof": {
+      "read": "orderParticipantOrAdmin",
+      "write": "acceptedCleanerOrAdmin"
+    },
+    "claim-images": {
+      "read": "claimParticipantOrAdmin",
+      "write": "claimantOrAdmin"
+    },
+    "cleaner-verification": {
+      "read": "cleanerOwnerOrAdmin",
+      "write": "cleanerOwnerOrAdmin"
+    },
+    "insurance": {
+      "read": "adminOnly",
+      "write": "adminOnly"
+    }
+  }
+}

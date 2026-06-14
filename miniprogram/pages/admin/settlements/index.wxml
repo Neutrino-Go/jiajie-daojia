@@ -1,0 +1,6 @@
+<view class="page">
+  <view class="title">结算对账</view>
+  <view class="hint">结算与 payout 记录仅供人工复核，不接入真实打款。</view>
+  <view wx:if="{{summary}}" class="item">待结算记录：{{summary.pendingSettlementCount}}</view>
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+</view>
