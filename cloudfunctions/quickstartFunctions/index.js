@@ -70,6 +70,7 @@ const COLLECTIONS = [
   "users",
   "customerProfiles",
   "cleaners",
+  "cleanerProfiles",
   "orders",
   "favorites",
   "platformStats",
@@ -88,6 +89,7 @@ const COLLECTIONS = [
   "coupons",
   "cleanerTrustProfile",
   "orderRiskProfile",
+  "behaviorGraph",
   "behaviorGraphEdges",
   "paymentIntents",
   "paymentCallbacks",
@@ -98,6 +100,10 @@ const COLLECTIONS = [
   "reconciliationReports",
   "cleanerVerifications",
   "insurancePolicies",
+  "insuranceEnrollments",
+  "serviceProofs",
+  "systemMetrics",
+  "opsActions",
 ];
 
 const COMMISSION_RATE = 0.05;
