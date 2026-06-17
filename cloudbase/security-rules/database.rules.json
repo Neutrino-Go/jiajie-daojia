@@ -46,6 +46,22 @@
       "read": "auth.openid == resource.data.cleanerId || isAdmin(auth.openid)",
       "write": "cloudFunctionOnly"
     },
+    "cleanerVerificationQueue": {
+      "read": "auth.openid == resource.data.cleanerId || isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
+    "cleanerTrustProfile": {
+      "read": "maskedByCloudFunctionOnly",
+      "write": "cloudFunctionOnly"
+    },
+    "orderRiskProfile": {
+      "read": "maskedByCloudFunctionOnly",
+      "write": "cloudFunctionOnly"
+    },
+    "behaviorGraph": {
+      "read": "isAdmin(auth.openid)",
+      "write": "cloudFunctionOnly"
+    },
     "insurancePolicies": {
       "read": "isAdmin(auth.openid)",
       "write": "cloudFunctionOnly"

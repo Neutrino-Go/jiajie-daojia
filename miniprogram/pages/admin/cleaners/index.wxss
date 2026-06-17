@@ -2,5 +2,8 @@
 .title { font-size: 34rpx; font-weight: 700; }
 .hint { margin: 8rpx 0 24rpx; color: #6f7a74; font-size: 24rpx; line-height: 1.5; }
 .item { margin-bottom: 16rpx; padding: 20rpx; border-radius: 8rpx; background: #fff; }
+.name { font-size: 30rpx; font-weight: 700; color: #1f2a24; }
 .item text { display: block; margin-top: 8rpx; color: #6f7a74; font-size: 24rpx; }
+.sub-id { word-break: break-all; }
+.empty { padding: 28rpx; border-radius: 8rpx; background: #fff; color: #6f7a74; text-align: center; }
 .error { color: #c0392b; font-size: 24rpx; }

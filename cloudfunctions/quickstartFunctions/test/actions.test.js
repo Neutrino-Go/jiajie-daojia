@@ -2,6 +2,8 @@ const assert = require("assert");
 const fs = require("fs");
 const Module = require("module");
 const path = require("path");
+const { getCleanerDisplayName } = require("../lib/cleaner/cleanerDisplayService");
+const { autoValidateCleanerProfile, verifyCleanerApplication } = require("../lib/cleaner/verificationGate");
 
 class MemoryDoc {
   constructor(collection, id) {
@@ -3195,7 +3197,7 @@ async function runLaunchReadinessTests() {
   try {
     const submit = await invoke(verificationCleaner.main, {
       action: "submitCleanerVerification",
-      data: { idCardFileID: "cloud://id-card-private", note: "ready" },
+      data: validCleanerVerificationPayload(),
     });
     assert.strictEqual(submit.success, true, "submitCleanerVerification should succeed");
     assert.strictEqual(verificationDb.data.cleaners.find((item) => item._openid === "cleaner-a").launchEligible, false);
@@ -3216,6 +3218,116 @@ async function runLaunchReadinessTests() {
     assert(dashboard.data.summary.paymentProvider, "admin dashboard should include payment provider status");
   } finally {
     verificationAdmin.restore();
+  }
+}
+
+function validCleanerVerificationPayload(overrides = {}) {
+  return {
+    realName: "Zhang San",
+    idCard: "110101199003074512",
+    phone: "13900000000",
+    healthCertificateFileID: "cloud://health-cert-private",
+    trainingStatus: "submitted",
+    idCardFileID: "cloud://id-card-private",
+    note: "ready",
+    ...overrides,
+  };
+}
+
+async function runCleanerVerificationGateTests() {
+  assert.strictEqual(getCleanerDisplayName({ realName: "Zhang San", nickname: "Nick" }), "Z*", "realName should be masked first");
+  assert.strictEqual(getCleanerDisplayName({ nickname: "Nick" }), "Nick", "nickname should be used when realName is absent");
+  assert(/^家洁师#/.test(getCleanerDisplayName({ cleanerId: "cleaner-abc123" })), "display fallback should not be raw openid-only");
+
+  const valid = autoValidateCleanerProfile(validCleanerVerificationPayload());
+  assert.strictEqual(valid.valid, true, "complete cleaner application should validate");
+  assert.doesNotThrow(() => verifyCleanerApplication(validCleanerVerificationPayload()), "complete cleaner application should pass gate");
+  assert.throws(
+    () => verifyCleanerApplication(validCleanerVerificationPayload({ idCard: "" })),
+    (error) => error && error.code === "MISSING_REQUIRED_FIELDS",
+    "missing idCard should be rejected by gate"
+  );
+
+  const emptyDb = createPrivacyDB({
+    cleaners: [seedCleaner("cleaner-a", { realName: "", phone: "", idCardFileID: "", healthCertificateFileID: "", trainingStatus: "" })],
+    cleanerVerifications: [],
+    cleanerVerificationQueue: [],
+  });
+  const emptyCleaner = await loadFunction({ openid: "cleaner-a", db: emptyDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(emptyCleaner.main, { action: "submitCleanerVerification", data: {} });
+    expectFailed(result, "MISSING_REQUIRED_FIELDS", "MISSING_REQUIRED_FIELDS", "empty cleaner verification");
+    assert.strictEqual(emptyDb.data.cleanerVerifications.length, 0, "empty application should not create verification");
+    assert.strictEqual(emptyDb.data.cleanerVerificationQueue.length, 0, "empty application should not enter queue");
+  } finally {
+    emptyCleaner.restore();
+  }
+
+  const missingIdDb = createPrivacyDB({ cleanerVerifications: [], cleanerVerificationQueue: [] });
+  const missingIdCleaner = await loadFunction({ openid: "cleaner-a", db: missingIdDb, env: { APP_ENV: "production" } });
+  try {
+    const result = await invoke(missingIdCleaner.main, {
+      action: "submitCleanerVerification",
+      data: validCleanerVerificationPayload({ idCard: "", idCardFileID: "cloud://id-card-private" }),
+    });
+    expectFailed(result, "MISSING_REQUIRED_FIELDS", "MISSING_REQUIRED_FIELDS", "missing idCard verification");
+    assert.strictEqual(missingIdDb.data.cleanerVerifications.length, 0, "missing idCard should not create verification");
+    assert.strictEqual(missingIdDb.data.cleanerVerificationQueue.length, 0, "missing idCard should not enter queue");
+  } finally {
+    missingIdCleaner.restore();
+  }
+
+  const queueDb = createPrivacyDB({ cleanerVerifications: [], cleanerVerificationQueue: [] });
+  const queueCleaner = await loadFunction({ openid: "cleaner-a", db: queueDb, env: { APP_ENV: "production" } });
+  try {
+    const submit = await invoke(queueCleaner.main, {
+      action: "submitCleanerVerification",
+      data: validCleanerVerificationPayload(),
+    });
+    assert.strictEqual(submit.success, true, "valid verification should submit");
+    assert.strictEqual(submit.data.verification.status, "pending", "verification should await admin review");
+    assert.strictEqual(submit.data.verification.systemValidationStatus, "passed", "verification should record system validation");
+    assert.strictEqual(submit.data.verification.displayName, "Z*", "verification should expose readable masked displayName");
+    assert.strictEqual(queueDb.data.cleanerVerificationQueue.length, 1, "valid application should enter queue");
+    assert.strictEqual(queueDb.data.cleanerVerificationQueue[0].status, "queued", "queue status should be queued");
+    assert.strictEqual(queueDb.data.cleaners.find((item) => item._openid === "cleaner-a").launchEligible, false);
+  } finally {
+    queueCleaner.restore();
+  }
+
+  const queueAdmin = await loadFunction({ openid: "admin-a", db: queueDb, env: { APP_ENV: "production", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const list = await invoke(queueAdmin.main, { action: "adminListCleanerVerifications", data: {} });
+    assert.strictEqual(list.success, true, "admin should list verification queue");
+    assert.strictEqual(list.data.verifications[0].displayName, "Z*", "admin queue should show readable displayName");
+    assert.strictEqual(list.data.verifications[0].queueStatus, "queued", "admin queue should include queue status");
+
+    const review = await invoke(queueAdmin.main, {
+      action: "adminReviewCleanerVerification",
+      data: { cleanerId: "cleaner-a", status: "approved" },
+    });
+    assert.strictEqual(review.success, true, "adminReviewCleanerVerification should approve after system validation");
+    const cleaner = queueDb.data.cleaners.find((item) => item._openid === "cleaner-a");
+    assert.strictEqual(cleaner.launchEligible, true, "approved cleaner should be launch eligible");
+    assert.strictEqual(cleaner.canReceiveOrders, true, "approved cleaner should receive orders");
+    assert.strictEqual(queueDb.data.cleanerVerificationQueue[0].status, "approved", "queue should be marked approved");
+  } finally {
+    queueAdmin.restore();
+  }
+
+  const legacyDb = createPrivacyDB({
+    cleanerVerifications: [{ _id: "legacy-verification", verificationId: "legacy-verification", cleanerId: "cleaner-a", status: "pending" }],
+    cleanerVerificationQueue: [],
+  });
+  const legacyAdmin = await loadFunction({ openid: "admin-a", db: legacyDb, env: { APP_ENV: "production", ADMIN_OPENIDS: "admin-a" } });
+  try {
+    const review = await invoke(legacyAdmin.main, {
+      action: "adminReviewCleanerVerification",
+      data: { cleanerId: "cleaner-a", status: "approved" },
+    });
+    expectFailed(review, "INVALID_INPUT", "家洁师准入资料未通过系统校验", "legacy verification without system validation");
+  } finally {
+    legacyAdmin.restore();
   }
 }
 
@@ -3278,6 +3390,8 @@ function runStaticMiniprogramTests() {
   const cloudIndexText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/index.js"), "utf8");
   const cloudPricingText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/pricing.js"), "utf8");
   const trustRiskText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/trust-risk.js"), "utf8");
+  const verificationGateText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/cleaner/verificationGate.js"), "utf8");
+  const cleanerDisplayText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/cleaner/cleanerDisplayService.js"), "utf8");
   const riskNormalizerText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/risk/riskNormalizer.js"), "utf8");
   const behaviorGraphStoreText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/behavior/behaviorGraphStore.js"), "utf8");
   const decisionCalibratorText = fs.readFileSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/decision/decisionCalibrator.js"), "utf8");
@@ -3285,7 +3399,12 @@ function runStaticMiniprogramTests() {
   const v025QaPath = path.join(root, "docs/qa/v0.2.5-wechat-manual-test-checklist.md");
   const v025QaText = fs.existsSync(v025QaPath) ? fs.readFileSync(v025QaPath, "utf8") : "";
   const v029QaPath = path.join(root, "docs/qa/v0.2.9-launch-manual-test-master-checklist.md");
+  const v029R2QaPath = path.join(root, "docs/qa/v0.2.9-r2-verification-gate-manual-test-checklist.md");
   const devtoolsQaPath = path.join(root, "docs/qa/WECHAT_DEVTOOLS_MANUAL_COMPILE_AND_TEST.md");
+  const cleanerVerificationText = fs.readFileSync(path.join(root, "miniprogram/pages/cleaner-verification/index.js"), "utf8");
+  const cleanerVerificationWxml = fs.readFileSync(path.join(root, "miniprogram/pages/cleaner-verification/index.wxml"), "utf8");
+  const adminCleanersWxml = fs.readFileSync(path.join(root, "miniprogram/pages/admin/cleaners/index.wxml"), "utf8");
+  const databaseRulesText = fs.readFileSync(path.join(root, "cloudbase/security-rules/database.rules.json"), "utf8");
   assert(fs.existsSync(path.join(root, "docs/qa/v0.2.4-wechat-manual-test-checklist.md")), "v0.2.4 manual QA checklist should exist");
   assert(orderCreateText.includes("cleanerOpenidOf"), "order-create should use cleanerOpenidOf");
   assert(orderCreateText.includes("createPricingQuote"), "order-create should request server pricing quotes");
@@ -3360,6 +3479,20 @@ function runStaticMiniprogramTests() {
   ].forEach((action) => {
     assert(cloudIndexText.includes(action), `${action} should be registered for v0.2.9 launch readiness`);
   });
+  assert(fs.existsSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/cleaner/verificationGate.js")), "verificationGate should exist");
+  assert(fs.existsSync(path.join(root, "cloudfunctions/quickstartFunctions/lib/cleaner/cleanerDisplayService.js")), "cleanerDisplayService should exist");
+  assert(verificationGateText.includes("function verifyCleanerApplication"), "verificationGate should expose verifyCleanerApplication");
+  assert(verificationGateText.includes("function autoValidateCleanerProfile"), "verificationGate should expose autoValidateCleanerProfile");
+  assert(cleanerDisplayText.includes("function getCleanerDisplayName"), "cleanerDisplayService should expose getCleanerDisplayName");
+  assert(cloudIndexText.includes('"cleanerVerificationQueue"'), "COLLECTIONS should include cleanerVerificationQueue");
+  assert(cloudIndexText.includes("verifyCleanerApplication(data, cleaner)"), "submitCleanerVerification should use verification gate before queueing");
+  assert(cloudIndexText.includes("cleanerVerificationQueue"), "cloud function should write cleanerVerificationQueue");
+  ["realName", "idCard", "phone", "healthCertificateFileID", "trainingStatus"].forEach((field) => {
+    assert(cleanerVerificationText.includes(field), `cleaner verification page JS should submit ${field}`);
+    assert(cleanerVerificationWxml.includes(field), `cleaner verification page WXML should collect ${field}`);
+  });
+  assert(adminCleanersWxml.includes("displayName"), "admin cleaner queue should show readable displayName");
+  assert(databaseRulesText.includes('"cleanerVerificationQueue"'), "database rules should include cleanerVerificationQueue");
   [
     "docs/launch/09_CLOUDBASE_PRODUCTION_SECURITY_CHECKLIST.md",
     "cloudbase/security-rules/database.rules.json",
@@ -3368,11 +3501,16 @@ function runStaticMiniprogramTests() {
     assert(fs.existsSync(path.join(root, file)), `${file} should exist for production CloudBase security review`);
   });
   assert(fs.existsSync(v029QaPath), "v0.2.9 launch master QA checklist should exist");
+  assert(fs.existsSync(v029R2QaPath), "v0.2.9-r2 verification gate QA checklist should exist");
   assert(fs.existsSync(devtoolsQaPath), "WeChat DevTools compile checklist should exist");
   const v029QaText = fs.readFileSync(v029QaPath, "utf8");
+  const v029R2QaText = fs.readFileSync(v029R2QaPath, "utf8");
   const devtoolsQaText = fs.readFileSync(devtoolsQaPath, "utf8");
   ["微信支付", "退款", "结算", "数据库权限", "微信开发者工具", "家洁师准入", "运营控制台"].forEach((phrase) => {
     assert(v029QaText.includes(phrase), `v0.2.9 QA checklist should mention ${phrase}`);
+  });
+  ["MISSING_REQUIRED_FIELDS", "cleanerVerificationQueue", "launchEligible", "canReceiveOrders"].forEach((phrase) => {
+    assert(v029R2QaText.includes(phrase), `v0.2.9-r2 QA checklist should mention ${phrase}`);
   });
   ["上传云函数", "编译", "真机预览", "AppID", "基础库"].forEach((phrase) => {
     assert(devtoolsQaText.includes(phrase), `DevTools checklist should mention ${phrase}`);
@@ -3485,6 +3623,7 @@ runProductionGateTests()
   .then(runPlatformOpsWorkflowTests)
   .then(runPlatformOpsBoundaryTests)
   .then(runLaunchReadinessTests)
+  .then(runCleanerVerificationGateTests)
   .then(runStaticMiniprogramTests)
   .then(() => {
     console.log("action tests passed");

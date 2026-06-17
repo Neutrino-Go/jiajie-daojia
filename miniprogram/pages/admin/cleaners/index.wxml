@@ -1,9 +1,11 @@
 <view class="page">
   <view class="title">家洁师准入</view>
-  <view class="hint">此处仅查看审核队列；审核动作通过云函数 adminReviewCleanerVerification 执行。</view>
+  <view class="hint">此处查看系统校验后的审核队列；人工审核动作通过云函数 adminReviewCleanerVerification 执行。</view>
   <view wx:for="{{verifications}}" wx:key="verificationId" class="item">
-    <view>{{item.cleanerId}}</view>
-    <text>{{item.status}} / {{item.updatedAt}}</text>
+    <view class="name">{{item.displayName || '家洁师#待完善'}}</view>
+    <text>{{item.status}} / {{item.queueStatus || 'queued'}} / {{item.updatedAt}}</text>
+    <text class="sub-id">{{item.cleanerId}}</text>
   </view>
+  <view wx:if="{{!loading && !verifications.length}}" class="empty">暂无待审核记录</view>
   <view wx:if="{{error}}" class="error">{{error}}</view>
 </view>
