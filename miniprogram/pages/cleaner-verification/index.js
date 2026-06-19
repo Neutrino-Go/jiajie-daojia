@@ -6,7 +6,14 @@ Page({
     submitting: false,
     verification: null,
     badges: null,
-    note: "",
+    form: {
+      realName: "",
+      idCard: "",
+      phone: "",
+      healthCertificateFileID: "",
+      trainingStatus: "submitted",
+      note: "",
+    },
     error: "",
   },
 
@@ -29,15 +36,17 @@ Page({
     }
   },
 
-  onNoteInput(event) {
-    this.setData({ note: event.detail.value || "" });
+  onFieldInput(event) {
+    const field = event.currentTarget.dataset.field;
+    if (!field) return;
+    this.setData({ [`form.${field}`]: event.detail.value || "" });
   },
 
   async submit() {
     this.setData({ submitting: true, error: "" });
     try {
       const result = await callCloud("submitCleanerVerification", {
-        note: this.data.note,
+        ...this.data.form,
       });
       this.setData({ verification: result.verification || null });
       wx.showToast({ title: "已提交", icon: "success" });

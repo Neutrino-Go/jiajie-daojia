@@ -99,6 +99,7 @@ const COLLECTIONS = [
   "payoutAdjustments",
   "reconciliationReports",
   "cleanerVerifications",
+  "cleanerVerificationQueue",
   "insurancePolicies",
   "insuranceEnrollments",
   "serviceProofs",
@@ -262,6 +263,122 @@ function ok(data) {
     success: true,
     data,
   };
+}
+
+const VERIFICATION_ID_CARD_PATTERN = /^(\d{15}|\d{17}[\dXx])$/;
+const VERIFICATION_PHONE_PATTERN = /^1[3-9]\d{9}$/;
+const VERIFICATION_TRAINING_STATUSES = new Set(["submitted", "completed", "passed", "approved"]);
+
+function cleanVerificationText(value, maxLength = 120) {
+  return String(value || "")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function firstVerificationValue(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      const found = value.map((item) => cleanVerificationText(item, 200)).find(Boolean);
+      if (found) return found;
+    } else {
+      const text = cleanVerificationText(value, 200);
+      if (text) return text;
+    }
+  }
+  return "";
+}
+
+function maskRealName(value) {
+  const name = cleanVerificationText(value, 40);
+  if (!name) return "";
+  return `${name.slice(0, 1)}*`;
+}
+
+function getCleanerDisplayName(cleaner = {}) {
+  const maskedRealName = maskRealName(cleaner.realName);
+  if (maskedRealName) return maskedRealName;
+  const nickname = cleanVerificationText(cleaner.nickname || cleaner.displayName, 24);
+  if (nickname) return nickname;
+  const id = cleanVerificationText(cleaner.cleanerId || cleaner._openid || cleaner.openid, 80);
+  return `家洁师#${id ? id.slice(-6) : "待完善"}`;
+}
+
+function verificationIdCardOf(data = {}, cleaner = {}) {
+  return firstVerificationValue(data.idCard, data.idCardNo, data.identityNo, cleaner.idCard, cleaner.idCardNo, cleaner.identityNo);
+}
+
+function verificationPhoneOf(data = {}, cleaner = {}) {
+  return firstVerificationValue(data.phone, data.mobile, cleaner.phone, cleaner.mobile);
+}
+
+function verificationHealthCertOf(data = {}, cleaner = {}) {
+  return firstVerificationValue(
+    data.healthCert,
+    data.healthCertificateFileID,
+    data.healthCertificateFileIDs,
+    data.healthCertificateUploadId,
+    cleaner.healthCert,
+    cleaner.healthCertificateFileID,
+    cleaner.healthCertificateFileIDs,
+    cleaner.healthCertificateUploadId
+  );
+}
+
+function verificationTrainingStatusOf(data = {}, cleaner = {}) {
+  return cleanVerificationText(
+    firstVerificationValue(data.trainingStatus, data.trainingSubmissionStatus, cleaner.trainingSubmissionStatus, cleaner.trainingStatus),
+    40
+  ).toLowerCase();
+}
+
+function verificationIdCardMasked(idCard) {
+  const value = cleanVerificationText(idCard, 32);
+  if (!value) return "";
+  return `${value.slice(0, 3)}***********${value.slice(-4)}`;
+}
+
+function autoValidateCleanerProfile(data = {}, cleaner = {}) {
+  const realName = firstVerificationValue(data.realName, cleaner.realName);
+  const idCard = verificationIdCardOf(data, cleaner);
+  const phone = verificationPhoneOf(data, cleaner);
+  const healthCert = verificationHealthCertOf(data, cleaner);
+  const trainingStatus = verificationTrainingStatusOf(data, cleaner);
+  const missing = [];
+  if (!realName) missing.push("realName");
+  if (!idCard) missing.push("idCard");
+  if (!healthCert) missing.push("healthCert");
+  if (!phone) missing.push("phone");
+  if (!trainingStatus) missing.push("trainingStatus");
+
+  const errors = [];
+  if (idCard && !VERIFICATION_ID_CARD_PATTERN.test(idCard)) errors.push("INVALID_ID_CARD");
+  if (phone && !VERIFICATION_PHONE_PATTERN.test(phone)) errors.push("INVALID_PHONE");
+  if (trainingStatus && !VERIFICATION_TRAINING_STATUSES.has(trainingStatus)) errors.push("INVALID_TRAINING_STATUS");
+
+  return {
+    valid: missing.length === 0 && errors.length === 0,
+    missing,
+    errors,
+    normalized: {
+      realName,
+      idCardMasked: verificationIdCardMasked(idCard),
+      idCardLast4: idCard ? idCard.slice(-4) : "",
+      phone,
+      healthCert,
+      trainingStatus,
+    },
+  };
+}
+
+function verifyCleanerApplication(data = {}, cleaner = {}) {
+  const validation = autoValidateCleanerProfile(data, cleaner);
+  if (validation.missing.length > 0) {
+    throw AppError("MISSING_REQUIRED_FIELDS", "MISSING_REQUIRED_FIELDS");
+  }
+  if (validation.errors.length > 0) {
+    throw AppError(validation.errors[0], "INVALID_INPUT");
+  }
+  return validation;
 }
 
 function fail(error) {
@@ -1389,7 +1506,7 @@ function publicCleanerProfile(cleaner, viewerContext = {}) {
   const trustBadges = publicCleanerTrustBadges(cleaner);
   const profile = {
     cleanerId,
-    displayName: cleaner.displayName || "家洁师",
+    displayName: getCleanerDisplayName({ ...cleaner, cleanerId }),
     avatarUrl,
     avatar: cleaner.avatar || avatarUrl,
     ratingAvg: Number(cleaner.ratingAvg || cleaner.rating || 0),
@@ -1481,6 +1598,19 @@ function assertCleanerLaunchEligible(cleaner) {
 
 function isCleanerLaunchVisible(cleaner = {}) {
   return !cleanerLaunchBlockedReason(cleaner);
+}
+
+function firstVerificationFileID(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      const found = value.map((item) => String(item || "").trim()).find(Boolean);
+      if (found) return found;
+    } else {
+      const text = String(value || "").trim();
+      if (text) return text;
+    }
+  }
+  return "";
 }
 
 function publicCleaner(cleaner) {
@@ -3243,6 +3373,11 @@ function privateCleanerVerification(record = {}) {
     healthCertificateFileIDs: normalizeVerificationFileIDs(record.healthCertificateFileIDs),
     trainingCertificateFileIDs: normalizeVerificationFileIDs(record.trainingCertificateFileIDs),
     serviceCertificateFileIDs: normalizeVerificationFileIDs(record.serviceCertificateFileIDs),
+    displayName: record.displayName || getCleanerDisplayName({ cleanerId: record.cleanerId, realName: record.realName, nickname: record.nickname }),
+    realNameMasked: record.realNameMasked || maskRealName(record.realName),
+    systemValidationStatus: record.systemValidationStatus || "",
+    validationErrors: Array.isArray(record.validationErrors) ? record.validationErrors.slice(0, 20) : [],
+    queueStatus: record.queueStatus || "",
     rejectReason: record.rejectReason || "",
     createdAt: record.createdAt || "",
     updatedAt: record.updatedAt || "",
@@ -3254,19 +3389,53 @@ async function submitCleanerVerification(data = {}) {
   await requireUserRole(openid, "cleaner");
   const cleaner = await ensureCleanerProfile(openid);
   const submittedAt = now();
+  const validation = verifyCleanerApplication(data, cleaner);
+  const idCardFileIDs = normalizeVerificationFileIDs(
+    data.idCardFileIDs || data.idCardFileID ? data.idCardFileIDs || [data.idCardFileID] : cleaner.idCardFileID ? [cleaner.idCardFileID] : []
+  );
+  const healthCertificateFileIDs = normalizeVerificationFileIDs(
+    data.healthCertificateFileIDs || data.healthCertificateFileID
+      ? data.healthCertificateFileIDs || [data.healthCertificateFileID]
+      : cleaner.healthCertificateFileID
+        ? [cleaner.healthCertificateFileID]
+        : []
+  );
+  const trainingCertificateFileIDs = normalizeVerificationFileIDs(
+    data.trainingCertificateFileIDs || data.trainingCertificateFileID ? data.trainingCertificateFileIDs || [data.trainingCertificateFileID] : []
+  );
+  const serviceCertificateFileIDs = normalizeVerificationFileIDs(
+    data.serviceCertificateFileIDs || data.serviceCertificateFileID ? data.serviceCertificateFileIDs || [data.serviceCertificateFileID] : []
+  );
+  const displayName = getCleanerDisplayName({
+    ...cleaner,
+    cleanerId: openid,
+    realName: validation.normalized.realName,
+    nickname: data.nickname || cleaner.nickname,
+  });
   await safeCreateCollection("cleanerVerifications");
+  await safeCreateCollection("cleanerVerificationQueue");
   const existing = await findOne("cleanerVerifications", { cleanerId: openid, status: "pending" }).catch(() => null);
   const payload = {
     cleanerId: openid,
     status: "pending",
+    queueStatus: "queued",
+    systemValidationStatus: "passed",
+    validationErrors: [],
+    displayName,
+    realName: validation.normalized.realName,
+    realNameMasked: maskRealName(validation.normalized.realName),
+    idCardMasked: validation.normalized.idCardMasked,
+    idCardLast4: validation.normalized.idCardLast4,
+    phone: validation.normalized.phone,
     identityVerificationStatus: "pending",
-    healthCertificateStatus: data.healthCertificateFileIDs ? "pending" : cleaner.healthCertificateStatus || "",
-    trainingStatus: data.trainingCertificateFileIDs ? "pending" : cleaner.trainingStatus || "",
-    serviceCertificateStatus: data.serviceCertificateFileIDs ? "pending" : cleaner.serviceCertificateStatus || "",
-    idCardFileIDs: normalizeVerificationFileIDs(data.idCardFileIDs || data.idCardFileID ? data.idCardFileIDs || [data.idCardFileID] : []),
-    healthCertificateFileIDs: normalizeVerificationFileIDs(data.healthCertificateFileIDs || data.healthCertificateFileID ? data.healthCertificateFileIDs || [data.healthCertificateFileID] : []),
-    trainingCertificateFileIDs: normalizeVerificationFileIDs(data.trainingCertificateFileIDs || data.trainingCertificateFileID ? data.trainingCertificateFileIDs || [data.trainingCertificateFileID] : []),
-    serviceCertificateFileIDs: normalizeVerificationFileIDs(data.serviceCertificateFileIDs || data.serviceCertificateFileID ? data.serviceCertificateFileIDs || [data.serviceCertificateFileID] : []),
+    healthCertificateStatus: "pending",
+    trainingStatus: "pending",
+    trainingSubmissionStatus: validation.normalized.trainingStatus,
+    serviceCertificateStatus: serviceCertificateFileIDs.length ? "pending" : cleaner.serviceCertificateStatus || "",
+    idCardFileIDs,
+    healthCertificateFileIDs,
+    trainingCertificateFileIDs,
+    serviceCertificateFileIDs,
     note: String(data.note || "").slice(0, 200),
     updatedAt: submittedAt,
   };
@@ -3285,11 +3454,42 @@ async function submitCleanerVerification(data = {}) {
       },
     });
   }
+  const queueId = `queue_${verificationId}`;
+  const queuePayload = {
+    queueId,
+    verificationId,
+    cleanerId: openid,
+    displayName,
+    status: "queued",
+    systemValidationStatus: "passed",
+    priority: "normal",
+    updatedAt: submittedAt,
+  };
+  const existingQueue = await findOne("cleanerVerificationQueue", { verificationId }).catch(() => null);
+  if (existingQueue) {
+    await db.collection("cleanerVerificationQueue").doc(existingQueue._id).update({ data: queuePayload });
+  } else {
+    await db.collection("cleanerVerificationQueue").add({
+      data: {
+        _id: queueId,
+        ...queuePayload,
+        createdAt: submittedAt,
+      },
+    });
+  }
   await db.collection("cleaners").doc(cleaner._id).update({
     data: {
+      realName: validation.normalized.realName,
+      realNameMasked: maskRealName(validation.normalized.realName),
+      idCardMasked: validation.normalized.idCardMasked,
+      idCardLast4: validation.normalized.idCardLast4,
+      phone: validation.normalized.phone,
+      healthCertificateFileID: firstVerificationFileID(healthCertificateFileIDs),
       launchEligible: false,
       canReceiveOrders: false,
       identityVerificationStatus: "pending",
+      healthCertificateStatus: "pending",
+      trainingStatus: "pending",
       verificationStatus: "pending",
       updatedAt: submittedAt,
     },
@@ -3300,7 +3500,7 @@ async function submitCleanerVerification(data = {}) {
     action: "submitCleanerVerification",
     targetType: "cleanerVerification",
     targetId: verificationId,
-    after: { cleanerId: openid, status: "pending" },
+    after: { cleanerId: openid, status: "pending", queueStatus: "queued", systemValidationStatus: "passed" },
   });
   const record = await findOne("cleanerVerifications", { _id: verificationId });
   return ok({ verification: privateCleanerVerification(record) });
@@ -3329,6 +3529,9 @@ async function adminReviewCleanerVerification(data = {}) {
     (await findOne("cleanerVerifications", { verificationId: data.verificationId }).catch(() => null)) ||
     (await findOne("cleanerVerifications", { cleanerId: data.cleanerId }).catch(() => null));
   if (!verification) throw AppError("家洁师准入资料不存在", "INVALID_INPUT");
+  if (verification.systemValidationStatus !== "passed") {
+    throw AppError("家洁师准入资料未通过系统校验", "INVALID_INPUT");
+  }
   const cleaner = await getCleaner(verification.cleanerId);
   if (!cleaner) throw AppError("家洁师资料不存在", "INVALID_INPUT");
   const approved = data.status === "approved" || data.approved === true;
@@ -3345,6 +3548,17 @@ async function adminReviewCleanerVerification(data = {}) {
     updatedAt: reviewedAt,
   };
   await db.collection("cleanerVerifications").doc(verification._id).update({ data: verificationPatch });
+  const queueRecord = await findOne("cleanerVerificationQueue", { verificationId: verification.verificationId || verification._id }).catch(() => null);
+  if (queueRecord) {
+    await db.collection("cleanerVerificationQueue").doc(queueRecord._id).update({
+      data: {
+        status: verificationPatch.status,
+        reviewedBy: openid,
+        reviewedAt,
+        updatedAt: reviewedAt,
+      },
+    });
+  }
   await db.collection("cleaners").doc(cleaner._id).update({
     data: {
       identityVerificationStatus: verificationPatch.identityVerificationStatus,

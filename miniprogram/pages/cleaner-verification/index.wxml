@@ -1,25 +1,51 @@
 <view class="page">
   <view class="header">
     <view class="title">家洁师准入资料</view>
-    <view class="subtitle">证件和保险状态仅用于平台审核，公开资料只展示核验状态。</view>
+    <view class="subtitle">系统会先校验资料完整性，通过后进入人工审核队列。</view>
   </view>
 
   <view wx:if="{{badges}}" class="panel">
     <view class="row"><text>上线资格</text><text>{{badges.launchEligible ? '已通过' : '待审核'}}</text></view>
     <view class="row"><text>实名核验</text><text>{{badges.identityVerified ? '已核验' : '待核验'}}</text></view>
     <view class="row"><text>健康凭证</text><text>{{badges.healthCertificateVerified ? '已核验' : '待核验'}}</text></view>
-    <view class="row"><text>保险说明</text><text>{{badges.insuranceStatusText || '保险能力待接入/以实际订单保障页为准。'}}</text></view>
+    <view class="row"><text>服务培训</text><text>{{badges.trainingVerified ? '已完成' : '待提交'}}</text></view>
   </view>
 
   <view class="panel">
-    <view class="section-title">提交说明</view>
-    <textarea value="{{note}}" bindinput="onNoteInput" maxlength="200" placeholder="补充说明，可留空" />
+    <view class="section-title">资料校验</view>
+    <view class="field">
+      <text>真实姓名</text>
+      <input value="{{form.realName}}" data-field="realName" bindinput="onFieldInput" placeholder="用于审核，公开展示会脱敏" />
+    </view>
+    <view class="field">
+      <text>身份证号</text>
+      <input value="{{form.idCard}}" data-field="idCard" bindinput="onFieldInput" maxlength="18" placeholder="仅用于系统格式校验和人工审核" />
+    </view>
+    <view class="field">
+      <text>手机号</text>
+      <input value="{{form.phone}}" data-field="phone" bindinput="onFieldInput" type="number" maxlength="11" placeholder="请输入 11 位手机号" />
+    </view>
+    <view class="field">
+      <text>健康凭证记录</text>
+      <input value="{{form.healthCertificateFileID}}" data-field="healthCertificateFileID" bindinput="onFieldInput" placeholder="填写已上传健康凭证 fileID 或记录编号" />
+    </view>
+    <view class="field">
+      <text>培训状态</text>
+      <input value="{{form.trainingStatus}}" data-field="trainingStatus" bindinput="onFieldInput" placeholder="submitted / completed / passed" />
+    </view>
+    <view class="field">
+      <text>补充说明</text>
+      <textarea value="{{form.note}}" data-field="note" bindinput="onFieldInput" maxlength="200" placeholder="可选" />
+    </view>
     <button loading="{{submitting}}" bindtap="submit">提交准入资料</button>
   </view>
 
   <view wx:if="{{verification}}" class="panel">
     <view class="section-title">当前审核状态</view>
+    <view class="row"><text>展示名</text><text>{{verification.displayName}}</text></view>
     <view class="row"><text>状态</text><text>{{verification.status}}</text></view>
+    <view class="row"><text>系统校验</text><text>{{verification.systemValidationStatus || '待提交'}}</text></view>
+    <view class="row"><text>队列状态</text><text>{{verification.queueStatus || '未入队'}}</text></view>
     <view class="row"><text>更新时间</text><text>{{verification.updatedAt}}</text></view>
   </view>
 

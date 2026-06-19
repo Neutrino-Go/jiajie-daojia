@@ -34,14 +34,29 @@
   padding: 10rpx 0;
   font-size: 26rpx;
 }
+.field {
+  margin-bottom: 18rpx;
+}
+.field > text {
+  display: block;
+  margin-bottom: 8rpx;
+  color: #3f4a45;
+  font-size: 24rpx;
+}
+input,
 textarea {
   width: 100%;
-  min-height: 160rpx;
   box-sizing: border-box;
   padding: 16rpx;
   border: 1rpx solid #dce3df;
   border-radius: 8rpx;
   background: #fbfcfb;
+}
+input {
+  height: 80rpx;
+}
+textarea {
+  min-height: 160rpx;
 }
 button {
   margin-top: 20rpx;
