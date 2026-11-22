@@ -1,5 +1,13 @@
 const { callCloud, showError } = require("../../utils/cloud");
 
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value || "");
+  } catch (error) {
+    return value || "";
+  }
+}
+
 Page({
   data: {
     serviceType: "",
@@ -8,7 +16,9 @@ Page({
   },
 
   onLoad(options = {}) {
-    this.setData({ serviceType: options.serviceType || "" });
+    const rawServiceType = options.serviceType || "";
+    const serviceType = rawServiceType ? safeDecode(rawServiceType) : "";
+    this.setData({ serviceType });
     this.load();
   },
 
